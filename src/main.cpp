@@ -61,6 +61,7 @@ enum : int {
 inline esp_reset_reason_t esp_reset_reason() { return ESP_RST_UNKNOWN; }
 inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_WAKEUP_UNDEFINED; }
 #else
+#include <esp_ota_ops.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
 #endif
@@ -124,6 +125,25 @@ static bool powerButtonReleasedSinceWake = false;
 namespace {
 constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
+
+#ifndef SIMULATOR
+bool isPendingOtaVerification() {
+  const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+  if (runningPartition == nullptr) return false;
+
+  esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+  return esp_ota_get_state_partition(runningPartition, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+void confirmHealthyOtaBoot() {
+  const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
+  if (result == ESP_OK) {
+    LOG_INF("BOOT", "OTA first-boot health check passed; rollback cancelled");
+  } else {
+    LOG_ERR("BOOT", "Could not confirm OTA first boot: %s", esp_err_to_name(result));
+  }
+}
+#endif
 }  // namespace
 
 static void logBootHeap(const char* stage) {
@@ -928,7 +948,7 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting CrossInk version " CROSSINK_VERSION);
+  LOG_DBG("MAIN", "Starting FrostInk version " CROSSINK_VERSION);
   logMemoryStats("Boot");
 
   // Resolve the single boot-presentation decision. Skipping the splash also
@@ -939,6 +959,11 @@ void setup() {
                             : isSilentReboot            ? BootResume::Silent
                             : !APP_STATE.showBootScreen ? BootResume::QuickResume
                                                         : BootResume::Splash;
+#ifndef SIMULATOR
+  const bool pendingOtaVerification = isPendingOtaVerification();
+#else
+  const bool pendingOtaVerification = false;
+#endif
   bool allowFastInitialReaderRefresh = false;
 
   setupDisplayAndFonts(resume != BootResume::Splash, resume != BootResume::Network);
@@ -1070,13 +1095,14 @@ void setup() {
     activityManager.goToReader(path, false, allowFastInitialReaderRefresh);
   }
 
-  if (resume == BootResume::Silent || resume == BootResume::Network) {
+  bool firstPaintCompleted = true;
+  if (resume == BootResume::Silent || resume == BootResume::Network || pendingOtaVerification) {
     // Block until the first paint physically completes. refreshDisplay()
     // waits on the panel BUSY pin so when this returns the user can see the
     // new activity. Without the wait, an edge captured by gpio.update()
     // during boot dispatches against an invisible Home and the default
     // selectorIndex=0 opens the most-recent book.
-    activityManager.requestUpdateAndWait();
+    firstPaintCompleted = activityManager.requestUpdateAndWait() == RequestUpdateResult::Rendered;
     // Absorb any button held at this point into currentState as a non-edge:
     // two gpio.update() calls separated by > InputManager's 5ms debounce
     // transition the held bit through lastDebounceTime into currentState
@@ -1086,6 +1112,19 @@ void setup() {
     delay(10);
     gpio.update();
   }
+
+#ifndef SIMULATOR
+  if (pendingOtaVerification) {
+    if (firstPaintCompleted) {
+      // Hardware detection, SD mount, settings load, display setup, activity
+      // routing, and one visible paint all succeeded. This is the minimum
+      // healthy boot required before making the new OTA slot permanent.
+      confirmHealthyOtaBoot();
+    } else {
+      LOG_ERR("BOOT", "Leaving OTA image pending because the first UI paint failed");
+    }
+  }
+#endif
 
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();

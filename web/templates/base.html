@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#10262f" />
   <title>{{ title }}</title>
+  <link rel="icon" type="image/png" href="/logo.png?v={{ v }}" />
+  <link rel="apple-touch-icon" href="/logo.png?v={{ v }}" />
   <link rel="stylesheet" href="/style.css?v={{ v }}" />
 {{ head_extra }}
   <style>
@@ -11,18 +14,29 @@
   </style>
 </head>
 <body>
-  <h1><img class="logo-mark" src="/logo.png?v={{ v }}" alt="" /><span class="wordmark">Cross<span class="crossink-header">I</span>nk</span></h1>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="FrostInk home">
+      <img class="logo-mark" src="/logo.png?v={{ v }}" alt="" />
+      <span class="brand-copy">
+        <span class="brand-edition">Personal reader</span>
+        <span class="wordmark">Frost<span class="frostink-ink">Ink</span></span>
+      </span>
+    </a>
+    <span class="portal-label">Device portal</span>
+  </header>
 
-  <div class="nav-links">
+  <nav class="nav-links" aria-label="Primary">
     <a href="/"{{ cls_home }}>Home</a>
     <a href="/files"{{ cls_files }}>File Manager</a>
     <a href="/settings"{{ cls_settings }}>Settings</a>
     <a href="/fonts"{{ cls_fonts }}>Fonts</a>
-  </div>
+  </nav>
 
+  <main>
 {{ body }}
+  </main>
 
-  <p class="footer">CrossInk &bull; Open Source</p>
+  <p class="footer"><span>FrostInk</span><span aria-hidden="true">/</span><span>Built on CrossInk</span></p>
 
 {{ script }}
 </body>

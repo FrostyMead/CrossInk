@@ -7,11 +7,14 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() { return NO_UPDATE; }
 OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, std::atomic<bool>*) { return NO_UPDATE; }
 #else
 #include <Arduino.h>
+#include <HalStorage.h>
 #include <Logging.h>
 #include <ReleaseJsonParser.h>
 #include <strings.h>
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
 #include <utility>
 
 #include "AppVersion.h"
@@ -19,12 +22,13 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 #include "esp_http_client.h"
 #include "esp_ota_ops.h"
 #include "mbedtls/sha256.h"
+#include "network/FirmwareFlasher.h"
 #include "network/HttpDownloader.h"
 #include "network/WifiPowerSaveGuard.h"
 
 namespace {
 #ifndef CROSSINK_OTA_RELEASE_URL
-#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/uxjulia/CrossInk/releases/latest"
+#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/FrostyMead/CrossInk/releases/latest"
 #endif
 
 constexpr char latestReleaseUrl[] = CROSSINK_OTA_RELEASE_URL;
@@ -38,8 +42,10 @@ constexpr char firmwareAssetName[] = "firmware.bin";
 #endif
 
 constexpr char binSuffix[] = ".bin";
+constexpr char otaStagingDirectory[] = "/.crosspoint";
+constexpr char otaStagingPath[] = "/.crosspoint/frostink-ota.bin";
 constexpr size_t VERSION_SEGMENT_COUNT = 4;
-constexpr size_t OTA_PROGRESS_UPDATE_BYTES = 64 * 1024;
+constexpr size_t OTA_HASH_BUFFER_BYTES = 4096;
 
 struct ParsedVersion {
   int segments[VERSION_SEGMENT_COUNT] = {0, 0, 0, 0};
@@ -149,22 +155,27 @@ void formatSha256(const uint8_t digest[32], char output[65]) {
   output[64] = '\0';
 }
 
-bool isHttpUrl(const std::string& url) { return url.rfind("http://", 0) == 0; }
-
-bool endsWith(const char* value, const char* suffix) {
-  if (value == nullptr || suffix == nullptr) return false;
-  const size_t valueLength = strlen(value);
-  const size_t suffixLength = strlen(suffix);
-  if (suffixLength > valueLength) return false;
-  return strcmp(value + valueLength - suffixLength, suffix) == 0;
-}
+bool isHttpsUrl(const std::string& url) { return url.rfind("https://", 0) == 0; }
 
 bool isMatchingFirmwareAssetName(const char* assetName) {
   if (assetName == nullptr) return false;
   if (strcmp(assetName, firmwareAssetName) == 0) return true;
   if (!startsWith(assetName, firmwareAssetStem)) return false;
-  if (assetName[strlen(firmwareAssetStem)] != '-') return false;
-  return endsWith(assetName, binSuffix);
+
+  const char* version = assetName + strlen(firmwareAssetStem);
+  if (version[0] != '-' || (version[1] != 'v' && version[1] != 'V')) return false;
+  version += 2;
+
+  size_t segmentCount = 0;
+  while (segmentCount < VERSION_SEGMENT_COUNT) {
+    if (!isDigit(*version)) return false;
+    while (isDigit(*version)) ++version;
+    ++segmentCount;
+    if (*version != '.') break;
+    ++version;
+  }
+
+  return segmentCount >= 3 && strcmp(version, binSuffix) == 0;
 }
 
 /*
@@ -178,14 +189,83 @@ extern esp_err_t esp_crt_bundle_attach(void* conf);
 
 size_t totalBytesReceived = 0;
 
-struct OtaInstallContext {
+struct OtaFlashContext {
   size_t* processedSize = nullptr;
-  size_t totalSize = 0;
-  size_t lastProgressBytes = 0;
-  int lastReportedPct = -1;
+  size_t imageSize = 0;
   OtaUpdater::ProgressCallback onProgress = nullptr;
   void* progressCtx = nullptr;
 };
+
+enum class StagedHashResult {
+  OK,
+  OPEN_FAILED,
+  SIZE_MISMATCH,
+  READ_FAILED,
+  OUT_OF_MEMORY,
+  HASH_MISMATCH,
+};
+
+StagedHashResult verifyStagedFileHash(const char* path, const size_t expectedSize, const char* expectedSha256) {
+  HalFile file;
+  if (!Storage.openFileForRead("OTA", path, file) || !file) return StagedHashResult::OPEN_FAILED;
+
+  const size_t fileSize = file.fileSize();
+  if (fileSize != expectedSize) {
+    LOG_ERR("OTA", "Staged firmware size mismatch: got=%zu expected=%zu", fileSize, expectedSize);
+    file.close();
+    return StagedHashResult::SIZE_MISMATCH;
+  }
+
+  auto buffer = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[OTA_HASH_BUFFER_BYTES]);
+  if (!buffer) {
+    file.close();
+    return StagedHashResult::OUT_OF_MEMORY;
+  }
+
+  mbedtls_sha256_context shaCtx;
+  mbedtls_sha256_init(&shaCtx);
+  mbedtls_sha256_starts(&shaCtx, /*is224=*/0);
+
+  size_t remaining = fileSize;
+  while (remaining > 0) {
+    const size_t requested = std::min(remaining, OTA_HASH_BUFFER_BYTES);
+    const int bytesRead = file.read(buffer.get(), requested);
+    if (bytesRead <= 0 || static_cast<size_t>(bytesRead) != requested) {
+      LOG_ERR("OTA", "Failed to hash staged firmware: got=%d expected=%zu", bytesRead, requested);
+      mbedtls_sha256_free(&shaCtx);
+      file.close();
+      return StagedHashResult::READ_FAILED;
+    }
+    mbedtls_sha256_update(&shaCtx, buffer.get(), requested);
+    remaining -= requested;
+  }
+
+  uint8_t computedSha256[32];
+  mbedtls_sha256_finish(&shaCtx, computedSha256);
+  mbedtls_sha256_free(&shaCtx);
+  file.close();
+
+  if (!sha256Matches(computedSha256, expectedSha256)) {
+    char computedSha256Hex[65];
+    formatSha256(computedSha256, computedSha256Hex);
+    LOG_ERR("OTA", "Staged firmware sha256 mismatch: expected=%s actual=%s", expectedSha256, computedSha256Hex);
+    return StagedHashResult::HASH_MISMATCH;
+  }
+  return StagedHashResult::OK;
+}
+
+void flashProgress(const size_t written, const size_t, void* ctx) {
+  auto* flashCtx = static_cast<OtaFlashContext*>(ctx);
+  if (flashCtx == nullptr || flashCtx->processedSize == nullptr) return;
+  *flashCtx->processedSize = flashCtx->imageSize + written;
+  if (flashCtx->onProgress != nullptr) flashCtx->onProgress(flashCtx->progressCtx);
+}
+
+void removeStagedFirmware() {
+  if (Storage.exists(otaStagingPath) && !Storage.remove(otaStagingPath)) {
+    LOG_ERR("OTA", "Could not remove staged firmware: %s", otaStagingPath);
+  }
+}
 
 esp_err_t release_manifest_event_handler(esp_http_client_event_t* event) {
   if (event->event_id != HTTP_EVENT_ON_DATA) return ESP_OK;
@@ -202,18 +282,6 @@ esp_err_t release_manifest_event_handler(esp_http_client_event_t* event) {
   return ESP_OK;
 }
 
-void notifyOtaProgress(OtaInstallContext* ctx, const bool force) {
-  if (ctx == nullptr || ctx->onProgress == nullptr || ctx->processedSize == nullptr || ctx->totalSize == 0) return;
-
-  const size_t processed = *ctx->processedSize;
-  const int pct = static_cast<int>(static_cast<uint64_t>(processed) * 100 / ctx->totalSize);
-  if (force || pct != ctx->lastReportedPct || processed - ctx->lastProgressBytes >= OTA_PROGRESS_UPDATE_BYTES) {
-    ctx->lastReportedPct = pct;
-    ctx->lastProgressBytes = processed;
-    ctx->onProgress(ctx->progressCtx);
-  }
-}
-
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
@@ -226,6 +294,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   otaSize = 0;
   processedSize = 0;
   totalSize = 0;
+  installPhase = IDLE;
 
   esp_err_t esp_err;
   ReleaseJsonParser releaseParser(isMatchingFirmwareAssetName);
@@ -252,7 +321,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
     return INTERNAL_UPDATE_ERROR;
   }
 
-  esp_err = esp_http_client_set_header(client_handle, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+  esp_err = esp_http_client_set_header(client_handle, "User-Agent", "FrostInk-ESP32-" CROSSINK_VERSION);
   if (esp_err != ESP_OK) {
     LOG_ERR("OTA", "esp_http_client_set_header Failed : %s", esp_err_to_name(esp_err));
     esp_http_client_cleanup(client_handle);
@@ -291,7 +360,14 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   otaUrl = releaseParser.getFirmwareUrl();
   otaSha256 = releaseParser.getFirmwareSha256();
   otaSize = releaseParser.getFirmwareSize();
-  totalSize = otaSize;
+  if (!isHttpsUrl(otaUrl) || !isSha256Hex(otaSha256.c_str()) || otaSize == 0) {
+    LOG_ERR("OTA", "Release asset is missing required HTTPS, size, or sha256 metadata");
+    otaUrl.clear();
+    otaSha256.clear();
+    otaSize = 0;
+    return JSON_PARSE_ERROR;
+  }
+  totalSize = otaSize * 2;
   updateAvailable = true;
 
   LOG_DBG("OTA", "Found update: tag=%s size=%zu sha256=%s", latestVersion.c_str(), otaSize,
@@ -319,146 +395,102 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return cancelRequested != nullptr && cancelRequested->load(std::memory_order_relaxed);
   };
 
-  if (!isUpdateNewer()) {
-    return UPDATE_OLDER_ERROR;
-  }
-
-  if (isCancellationRequested()) {
-    return CANCELLED_ERROR;
-  }
-  const bool hasManifestSha256 = isSha256Hex(otaSha256.c_str());
-  if (!otaSha256.empty() && !hasManifestSha256) {
-    LOG_ERR("OTA", "Refusing firmware with invalid manifest sha256");
+  if (!isUpdateNewer()) return UPDATE_OLDER_ERROR;
+  if (isCancellationRequested()) return CANCELLED_ERROR;
+  if (!isHttpsUrl(otaUrl) || !isSha256Hex(otaSha256.c_str()) || otaSize == 0) {
+    LOG_ERR("OTA", "Refusing release without HTTPS, size, and sha256 metadata");
     return JSON_PARSE_ERROR;
   }
-  if (isHttpUrl(otaUrl) && !hasManifestSha256) {
-    LOG_ERR("OTA", "Refusing HTTP firmware URL without manifest sha256");
-    return JSON_PARSE_ERROR;
-  }
-
-  processedSize = 0;
 
   const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
   if (updatePartition == nullptr) {
     LOG_ERR("OTA", "No OTA update partition found");
     return INTERNAL_UPDATE_ERROR;
   }
-
-  if (otaSize > 0 && otaSize > updatePartition->size) {
+  if (otaSize > updatePartition->size) {
     LOG_ERR("OTA", "Firmware too large: %zu > %zu", otaSize, updatePartition->size);
     return INTERNAL_UPDATE_ERROR;
   }
 
-  esp_ota_handle_t otaHandle = 0;
-  OtaInstallContext installCtx;
-  installCtx.processedSize = &processedSize;
-  installCtx.totalSize = totalSize;
-  installCtx.onProgress = onProgress;
-  installCtx.progressCtx = ctx;
-
-  WifiPowerSaveGuard wifiPowerSaveGuard;
-
-  LOG_INF("OTA", "Starting firmware download: url=%s heap=%u maxAlloc=%u", otaUrl.c_str(), ESP.getFreeHeap(),
-          ESP.getMaxAllocHeap());
-
-  mbedtls_sha256_context shaCtx;
-  mbedtls_sha256_init(&shaCtx);
-  mbedtls_sha256_starts(&shaCtx, /*is224=*/0);
-  bool otaStarted = false;
-  esp_err_t otaBeginError = ESP_OK;
-  esp_err_t otaWriteError = ESP_OK;
+  Storage.mkdir(otaStagingDirectory);
+  removeStagedFirmware();
+  processedSize = 0;
+  totalSize = otaSize * 2;
+  installPhase = DOWNLOADING;
 
   HttpDownloader::DownloadOptions downloadOptions;
   downloadOptions.shouldCancel = isCancellationRequested;
-  // wolfSSL currently has no CA bundle, so only use it when the trusted release
-  // manifest supplied a digest that pins the firmware bytes. Older HTTPS
-  // releases without a digest retain the verified esp_http_client path.
-  if (hasManifestSha256) downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
-  const auto transferResult = HttpDownloader::streamUrl(
-      otaUrl,
-      [&](const uint8_t* data, const size_t len) {
-        if (!otaStarted) {
-          const size_t firmwareSize = otaSize > 0 ? otaSize : OTA_SIZE_UNKNOWN;
-          LOG_INF("OTA", "Writing firmware to %s @0x%x size=%zu heap=%u maxAlloc=%u", updatePartition->label,
-                  static_cast<unsigned>(updatePartition->address), firmwareSize, ESP.getFreeHeap(),
-                  ESP.getMaxAllocHeap());
-          otaBeginError = esp_ota_begin(updatePartition, firmwareSize, &otaHandle);
-          if (otaBeginError != ESP_OK) {
-            LOG_ERR("OTA", "esp_ota_begin failed: %s (heap=%u maxAlloc=%u)", esp_err_to_name(otaBeginError),
-                    ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-            return false;
-          }
-          otaStarted = true;
-        }
-
-        otaWriteError = esp_ota_write(otaHandle, data, len);
-        if (otaWriteError != ESP_OK) {
-          LOG_ERR("OTA", "esp_ota_write failed after %zu bytes: %s", processedSize, esp_err_to_name(otaWriteError));
-          return false;
-        }
-
-        mbedtls_sha256_update(&shaCtx, data, len);
-        processedSize += len;
-        notifyOtaProgress(&installCtx, false);
-        return true;
+  // SecureNet's wolfSSL transport is used for the large asset to avoid TLS heap
+  // fragmentation. The GitHub API response is CA-verified and its mandatory
+  // digest pins every downloaded byte before the staged file is accepted.
+  downloadOptions.transport = HttpDownloader::Transport::WOLFSSL;
+  const auto transferResult = HttpDownloader::downloadToFile(
+      otaUrl, otaStagingPath,
+      [this, onProgress, ctx](const size_t downloaded, const size_t) {
+        processedSize = std::min(downloaded, otaSize);
+        if (onProgress != nullptr) onProgress(ctx);
       },
       nullptr, "", "", std::move(downloadOptions));
 
   if (transferResult != HttpDownloader::OK) {
-    mbedtls_sha256_free(&shaCtx);
-    if (otaStarted) esp_ota_abort(otaHandle);
+    removeStagedFirmware();
+    installPhase = IDLE;
     if (transferResult == HttpDownloader::ABORTED || isCancellationRequested()) {
-      LOG_INF("OTA", "Update cancelled");
+      LOG_INF("OTA", "Update cancelled during download");
       return CANCELLED_ERROR;
     }
-    if (otaBeginError != ESP_OK) return otaBeginError == ESP_ERR_NO_MEM ? OOM_ERROR : INTERNAL_UPDATE_ERROR;
-    if (otaWriteError != ESP_OK) return INTERNAL_UPDATE_ERROR;
-    LOG_ERR("OTA", "Firmware download failed after %zu/%zu bytes", processedSize, totalSize);
-    return HTTP_ERROR;
+    LOG_ERR("OTA", "Firmware staging download failed: %d", static_cast<int>(transferResult));
+    return transferResult == HttpDownloader::FILE_ERROR ? INTERNAL_UPDATE_ERROR : HTTP_ERROR;
   }
 
-  if (!otaStarted || processedSize == 0) {
-    LOG_ERR("OTA", "Firmware download returned no data");
-    mbedtls_sha256_free(&shaCtx);
-    if (otaStarted) esp_ota_abort(otaHandle);
-    return HTTP_ERROR;
+  if (isCancellationRequested()) {
+    removeStagedFirmware();
+    installPhase = IDLE;
+    return CANCELLED_ERROR;
   }
-  if (otaSize > 0 && processedSize != otaSize) {
-    LOG_ERR("OTA", "Firmware size mismatch: got %zu, expected %zu", processedSize, otaSize);
-    mbedtls_sha256_free(&shaCtx);
-    esp_ota_abort(otaHandle);
+
+  installPhase = VERIFYING;
+  processedSize = otaSize;
+  if (onProgress != nullptr) onProgress(ctx);
+
+  const StagedHashResult hashResult = verifyStagedFileHash(otaStagingPath, otaSize, otaSha256.c_str());
+  if (hashResult != StagedHashResult::OK) {
+    removeStagedFirmware();
+    installPhase = IDLE;
+    if (hashResult == StagedHashResult::OUT_OF_MEMORY) return OOM_ERROR;
+    if (hashResult == StagedHashResult::HASH_MISMATCH) return HASH_MISMATCH_ERROR;
+    return INTERNAL_UPDATE_ERROR;
+  }
+  LOG_INF("OTA", "Staged firmware release sha256 verified");
+
+  const auto validationResult = firmware_flash::validateImageFile(otaStagingPath, updatePartition->size);
+  if (validationResult != firmware_flash::Result::OK) {
+    LOG_ERR("OTA", "Staged firmware image validation failed: %s", firmware_flash::resultName(validationResult));
+    removeStagedFirmware();
+    installPhase = IDLE;
+    return validationResult == firmware_flash::Result::OOM ? OOM_ERROR : INVALID_FIRMWARE_ERROR;
+  }
+
+  if (isCancellationRequested()) {
+    removeStagedFirmware();
+    installPhase = IDLE;
+    return CANCELLED_ERROR;
+  }
+
+  installPhase = INSTALLING;
+  OtaFlashContext flashCtx{&processedSize, otaSize, onProgress, ctx};
+  const auto flashResult = firmware_flash::flashFromSdPath(otaStagingPath, flashProgress, &flashCtx);
+  removeStagedFirmware();
+  installPhase = IDLE;
+  if (flashResult != firmware_flash::Result::OK) {
+    LOG_ERR("OTA", "Staged firmware flash failed: %s", firmware_flash::resultName(flashResult));
+    if (flashResult == firmware_flash::Result::OOM) return OOM_ERROR;
     return INTERNAL_UPDATE_ERROR;
   }
 
-  notifyOtaProgress(&installCtx, true);
-
-  uint8_t computedSha256[32];
-  mbedtls_sha256_finish(&shaCtx, computedSha256);
-  mbedtls_sha256_free(&shaCtx);
-  if (hasManifestSha256) {
-    if (!sha256Matches(computedSha256, otaSha256.c_str())) {
-      char computedSha256Hex[65];
-      formatSha256(computedSha256, computedSha256Hex);
-      LOG_ERR("OTA", "Firmware sha256 mismatch: expected=%s actual=%s", otaSha256.c_str(), computedSha256Hex);
-      esp_ota_abort(otaHandle);
-      return HASH_MISMATCH_ERROR;
-    }
-    LOG_INF("OTA", "Firmware sha256 verified");
-  }
-
-  esp_err_t esp_err = esp_ota_end(otaHandle);
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_ota_end failed: %s", esp_err_to_name(esp_err));
-    return INTERNAL_UPDATE_ERROR;
-  }
-
-  esp_err = esp_ota_set_boot_partition(updatePartition);
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_ota_set_boot_partition failed: %s", esp_err_to_name(esp_err));
-    return INTERNAL_UPDATE_ERROR;
-  }
-
-  LOG_INF("OTA", "Update completed: %zu bytes", processedSize);
+  processedSize = totalSize;
+  if (onProgress != nullptr) onProgress(ctx);
+  LOG_INF("OTA", "FrostInk OTA completed: %zu verified bytes", otaSize);
   return OK;
 }
 #endif

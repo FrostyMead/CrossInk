@@ -1,4 +1,8 @@
-> **This is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** with a focus on improved fonts and minimal reading stats.
+<p align="center"><img src="./web/assets/logo.png" width="150" alt="FrostInk snow-crystal, pen-nib, and open-book mark" /></p>
+
+# FrostInk
+
+> **FrostInk is a personal reader firmware built on [CrossInk](https://github.com/uxjulia/CrossInk) and [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader).** It keeps their focused-reading foundation while adding a custom Frost theme, portal, branding, and carefully gated updates.
 
 ### Supported Devices
 
@@ -49,7 +53,7 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 - Reading [progress sync](./docs/nearby-position-sync.md) between two CrossInk devices.
 - Added customizable Auto Page Turn Interval (anything between 5-120 seconds).
 - Added ability to view Recent Books as a 3x3 grid view.
-- To view a more detailed list for each version, visit the [releases](https://github.com/uxjulia/CrossInk/releases) page to read release notes.
+- To view FrostInk builds and release notes, visit the [FrostInk releases](https://github.com/FrostyMead/CrossInk/releases) page.
 
 ---
 
@@ -108,11 +112,11 @@ See [Simulator](./docs/simulator.md) for setup, platform notes, keyboard control
 
 ---
 
-## Installation
+## FrostInk installation
 
-The fastest way to install Crossink is by using Inky, Crossink's web companion app: https://inky.crossink.dev/#flash-tools
+The first FrostInk install should be performed over USB with the [CrossPoint Flash Tools](https://crosspointreader.com/#flash-tools), selecting the Xteink X4 and the custom `.bin` option.
 
-Download a `firmware-*.bin` from the [releases page](https://github.com/uxjulia/CrossInk/releases), then flash it with the web installer or command line.
+After a verified FrostInk build is installed, later published releases can be installed from the device's OTA Update screen. See [Safe FrostInk OTA](./docs/frostink-ota.md) for the release and recovery process.
 
 See [Installation](./docs/installation.md) for step-by-step flashing and revert instructions.
 

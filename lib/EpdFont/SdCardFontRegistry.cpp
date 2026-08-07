@@ -6,6 +6,17 @@
 #include <algorithm>
 #include <cstring>
 
+namespace {
+bool storageAllocationFailed(const HalFile& file) {
+#ifdef SIMULATOR
+  (void)file;
+  return false;
+#else
+  return file.allocationFailed();
+#endif
+}
+}  // namespace
+
 // --- SdCardFontFamilyInfo helpers ---
 
 const SdCardFontFileInfo* SdCardFontFamilyInfo::findFile(uint8_t size, uint8_t style) const {
@@ -93,8 +104,8 @@ bool SdCardFontRegistry::parseFilename(const char* filename, uint8_t& size, uint
 bool SdCardFontRegistry::scanDirectory(const char* dirPath, SdCardFontFamilyInfo& family) {
   HalFile dir = Storage.open(dirPath);
   if (!dir || !dir.isDirectory()) {
-    if (dir.allocationFailed()) LOG_ERR("SDREG", "Out of memory opening font directory: %s", dirPath);
-    return !dir.allocationFailed();
+    if (storageAllocationFailed(dir)) LOG_ERR("SDREG", "Out of memory opening font directory: %s", dirPath);
+    return !storageAllocationFailed(dir);
   }
 
   char nameBuffer[128];
@@ -138,7 +149,7 @@ bool SdCardFontRegistry::scanDirectory(const char* dirPath, SdCardFontFamilyInfo
     family.files.push_back(std::move(info));
   }
 
-  if (dir.allocationFailed()) {
+  if (storageAllocationFailed(dir)) {
     LOG_ERR("SDREG", "Out of memory scanning font directory: %s", dirPath);
     return false;
   }
@@ -151,7 +162,7 @@ bool SdCardFontRegistry::scanDirectory(const char* dirPath, SdCardFontFamilyInfo
 bool SdCardFontRegistry::scanRoot(const char* rootPath, std::vector<SdCardFontFamilyInfo>& out) {
   HalFile root = Storage.open(rootPath);
   if (!root) {
-    if (root.allocationFailed()) {
+    if (storageAllocationFailed(root)) {
       LOG_ERR("SDREG", "Out of memory opening font root: %s", rootPath);
       return false;
     }
@@ -197,7 +208,7 @@ bool SdCardFontRegistry::scanRoot(const char* rootPath, std::vector<SdCardFontFa
     }
   }
 
-  if (root.allocationFailed()) {
+  if (storageAllocationFailed(root)) {
     LOG_ERR("SDREG", "Out of memory scanning font root: %s", rootPath);
     return false;
   }

@@ -3,11 +3,11 @@ title: Home
 nav_order: 1
 ---
 
-# CrossInk
+# FrostInk
 
-Welcome to CrossInk, a personal fork of CrossPoint Reader.
+Welcome to FrostInk, a personal X4 reader firmware built on CrossInk and CrossPoint Reader.
 
-[View on GitHub](https://github.com/uxjulia/CrossInk)
+[View FrostInk on GitHub](https://github.com/FrostyMead/CrossInk)
 
 ## User Docs
 
@@ -28,6 +28,7 @@ Welcome to CrossInk, a personal fork of CrossPoint Reader.
 - [File Formats](./file-formats.md)
 - [Web Server Guide](./webserver.md)
 - [Troubleshooting](./troubleshooting.md)
+- [Safe FrostInk OTA](./frostink-ota.md)
 
 ## Developer Docs
 

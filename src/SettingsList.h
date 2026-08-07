@@ -276,9 +276,8 @@ inline SettingInfo buildDictionaryFontSizeSetting(const SdCardFontRegistry* regi
   // With no dedicated dictionary family, a non-zero dictionary size applies
   // to the reader's SD-card family. Built-in reader fonts have no selectable
   // files, so they deliberately retain just the "use reader size" entry.
-  const char* familyName = SETTINGS.dictionarySdFontFamilyName[0] != '\0'
-                               ? SETTINGS.dictionarySdFontFamilyName
-                               : SETTINGS.sdFontFamilyName;
+  const char* familyName =
+      SETTINGS.dictionarySdFontFamilyName[0] != '\0' ? SETTINGS.dictionarySdFontFamilyName : SETTINGS.sdFontFamilyName;
   if (familyName[0] == '\0') return s;
   const auto* family = registry->findFamily(familyName);
   if (!family) return s;
@@ -397,16 +396,16 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
         {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15, StrId::STR_PAGES_30},
         "refreshFrequency", StrId::STR_CAT_DISPLAY));
-    add(SettingInfo::Enum(
-            StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
-            {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_MINIMAL, StrId::STR_THEME_DASHBOARD, StrId::STR_THEME_LYRA,
-             StrId::STR_THEME_LYRA_EXTENDED, StrId::STR_THEME_LYRA_CAROUSEL, StrId::STR_THEME_ROUNDEDRAFF},
-            "uiTheme", StrId::STR_CAT_DISPLAY)
+    add(SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
+                          {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_MINIMAL, StrId::STR_THEME_DASHBOARD,
+                           StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED, StrId::STR_THEME_LYRA_CAROUSEL,
+                           StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_FROST},
+                          "uiTheme", StrId::STR_CAT_DISPLAY)
             .withEnumRawValues({CrossPointSettings::UI_THEME::CLASSIC, CrossPointSettings::UI_THEME::MINIMAL,
                                 CrossPointSettings::UI_THEME::DASHBOARD, CrossPointSettings::UI_THEME::LYRA,
                                 CrossPointSettings::UI_THEME::LYRA_3_COVERS,
-                                CrossPointSettings::UI_THEME::LYRA_CAROUSEL,
-                                CrossPointSettings::UI_THEME::ROUNDEDRAFF}));
+                                CrossPointSettings::UI_THEME::LYRA_CAROUSEL, CrossPointSettings::UI_THEME::ROUNDEDRAFF,
+                                CrossPointSettings::UI_THEME::FROST}));
     add(SettingInfo::Enum(StrId::STR_UI_SCALE, &CrossPointSettings::uiScale, {StrId::STR_SMALL, StrId::STR_LARGE},
                           "uiScale", StrId::STR_CAT_DISPLAY)
             .withEnumRawValues({CrossPointSettings::UI_SCALE_SMALL, CrossPointSettings::UI_SCALE_LARGE}));

@@ -1,9 +1,9 @@
-name: Compile Release
+name: Build FrostInk Release
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Compile release builds"
+        description: "FrostInk version, for example 1.5.1"
         required: true
         type: string
 
@@ -16,16 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          token: ${{ secrets.RELEASE_PAT }}
           submodules: recursive
           fetch-depth: 0
 
-      - name: Verify release tag is on main
-        if: github.event_name == 'push'
+      - name: Record the tested source branch
+        shell: bash
         run: |
-          git fetch origin main:refs/remotes/origin/main
-          TAG_COMMIT="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
-          git merge-base --is-ancestor "$TAG_COMMIT" origin/main
+          echo "Building a draft FrostInk release from $GITHUB_REF_NAME at $GITHUB_SHA"
 
       - uses: actions/setup-python@v6
         with:
@@ -49,69 +46,62 @@ jobs:
         run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
 
       - name: Resolve release version
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
+          VERSION="$VERSION_INPUT"
           VERSION="${VERSION#v}"
-          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          sed -i "s/crossink_version = .*/crossink_version = $VERSION/" platformio.ini
-
-      - name: Build CrossInk
-        env:
-          CROSSINK_RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
-        run: pio run -e default -e sticky
-
-      - name: Generate release catalog
-        run: |
-          python3 scripts/generate_release_catalog.py \
-            --version "${{ env.RELEASE_VERSION }}" \
-            --repo "${{ github.repository }}" \
-            --firmware ".pio/build/default/firmware-x3-x4-v${{ env.RELEASE_VERSION }}.bin" \
-            --firmware ".pio/build/sticky/firmware-sticky-v${{ env.RELEASE_VERSION }}.bin" \
-            --output ".pio/build/catalog"
-
-      - name: Publish catalog to GitHub Pages source
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          CROSSINK_SIGNING_SSH_KEY: ${{ secrets.CROSSINK_SIGNING_SSH_KEY }}
-        run: |
-          if [ -z "$CROSSINK_SIGNING_SSH_KEY" ]; then
-            echo "::error::CROSSINK_SIGNING_SSH_KEY is not set"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Version must contain three or four numeric segments (for example 1.5.1)" >&2
             exit 1
           fi
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
 
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$CROSSINK_SIGNING_SSH_KEY" > ~/.ssh/crossink_actions_signing
-          chmod 600 ~/.ssh/crossink_actions_signing
-          ssh-keygen -y -f ~/.ssh/crossink_actions_signing > ~/.ssh/crossink_actions_signing.pub
+      - name: Install clang-format 21
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get update
+          sudo apt-get install -y clang-format-21
 
-          git config user.name "uxjulia"
-          git config user.email "julia@uxj.io"
-          git config gpg.format ssh
-          git config user.signingkey "$HOME/.ssh/crossink_actions_signing.pub"
+      - name: Check formatting
+        run: |
+          PATH="/usr/lib/llvm-21/bin:$PATH" ./bin/clang-format-fix
+          git diff --exit-code
 
-          git fetch origin "$DEFAULT_BRANCH"
-          git worktree add ../crossink-pages "origin/$DEFAULT_BRANCH"
-          cp ".pio/build/catalog" "../crossink-pages/docs/catalog"
-          cd ../crossink-pages
-          if git diff --quiet -- docs/catalog; then
-            echo "docs/catalog is already current"
-            exit 0
-          fi
-          git add docs/catalog
-          git commit -S -m "Update release manifests for v${RELEASE_VERSION}"
-          git push origin "HEAD:$DEFAULT_BRANCH"
+      - name: Run host tests
+        run: |
+          cmake -S test -B build/test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/test
+          ctest --test-dir build/test --output-on-failure -j
 
-      - name: Create GitHub Release
+      - name: Build FrostInk for X3/X4
+        env:
+          CROSSINK_RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+        run: pio run -e default
+
+      - name: Smoke test Frost theme
+        run: python3 scripts/run_simulator_smoke_test.py --env simulator --theme frost
+
+      - name: Write checksum
+        shell: bash
+        run: |
+          cd .pio/build/default
+          sha256sum "firmware-x3-x4-v${RELEASE_VERSION}.bin" > SHA256SUMS
+
+      - name: Create hardware-test draft release
         uses: softprops/action-gh-release@v3
         with:
-          token: ${{ secrets.RELEASE_PAT }}
           tag_name: v${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.sha }}
+          name: FrostInk v${{ env.RELEASE_VERSION }}
+          body: |
+            FrostInk X3/X4 firmware.
+
+            This release starts as a draft and must be tested on an X4 over USB before publishing.
           draft: true
           files: |
             .pio/build/default/firmware-x3-x4-v${{ env.RELEASE_VERSION }}.bin
-            .pio/build/sticky/firmware-sticky-v${{ env.RELEASE_VERSION }}.bin
+            .pio/build/default/SHA256SUMS

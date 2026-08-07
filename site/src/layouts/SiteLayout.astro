@@ -10,8 +10,8 @@ type Props = {
 };
 
 const docs = await getDocs();
-const { title = 'CrossInk', description = 'CrossInk firmware documentation', pageClass = '' } = Astro.props;
-const pageTitle = title === 'CrossInk' ? title : `${title} | CrossInk`;
+const { title = 'FrostInk', description = 'FrostInk reader firmware documentation', pageClass = '' } = Astro.props;
+const pageTitle = title === 'FrostInk' ? title : `${title} | FrostInk`;
 const currentDoc = docs.find((doc) => Astro.url.pathname === doc.url);
 ---
 
@@ -32,7 +32,7 @@ const currentDoc = docs.find((doc) => Astro.url.pathname === doc.url);
       })();
     </script>
     <meta name="description" content={description} />
-    <link rel="icon" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..900&display=swap" rel="stylesheet" />
@@ -41,17 +41,17 @@ const currentDoc = docs.find((doc) => Astro.url.pathname === doc.url);
   <body class={pageClass}>
     <header class="site-header">
       <a class="brand" href="/">
-        <span class="brand-mark">CI</span>
+        <img class="brand-mark" src="/favicon.png" alt="" />
         <span>
-          <strong>CrossInk</strong>
-          <small>Xteink X4 firmware</small>
+          <strong>FrostInk</strong>
+          <small>Personal Xteink X4 firmware</small>
         </span>
       </a>
       <nav class="top-nav" aria-label="Primary navigation">
         <a href="/docs.html">Docs</a>
         <a href="/installation.html">Install</a>
         <a href="/reader-features.html">Features</a>
-        <a href="https://github.com/uxjulia/CrossInk">GitHub</a>
+        <a href="https://github.com/FrostyMead/CrossInk">GitHub</a>
         <button type="button" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
           <svg
             class="icon-moon"

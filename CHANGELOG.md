@@ -2,6 +2,10 @@
 
 ### Added
 
+- Frost UI theme with crisp monochrome navigation, high-contrast selections, and matching web portal styling.
+- FrostInk boot branding with a custom snow-crystal, fountain-nib, and open-book mark.
+- A FrostInk identity pack across the boot screen, device portal, favicon, user-facing errors, and project documentation.
+- A FrostInk OTA channel with mandatory release SHA-256 metadata, SD staging, full image validation, atomic boot-slot switching, and first-boot rollback confirmation.
 - EPUB tables now lay out a row at a time in both Incremental and Full Section indexing, keeping regular tables readable without whole-table buffering.
 - Touch support for Seeed Studio Sticky
 - Nearby File Transfer can send EPUB, TXT, XTC, XTCH, PNG, and BMP files directly between two CrossInk devices without a Wi-Fi network.
@@ -50,7 +54,7 @@
 ### Fixed
 
 - Manage Fonts now opens through a lightweight restart path, freeing reader memory before it loads the font catalog.
-- X4 network workflows now use a clean refresh when replacing whole screens, preventing prior content from remaining visible in File Transfer, Wi-Fi, Sync Progress, OPDS, updates, and nearby-transfer views.
+- X4 network workflows now use a clean single-pass refresh when replacing whole screens, preventing prior content from remaining visible without the multi-flash full waveform.
 - Home and Recent Books no longer repeatedly try to generate a cover thumbnail for EPUBs that do not include a cover.
 - Manage Fonts now reports an installed-font scan memory error instead of restarting when a fragmented X3/X4 heap cannot enumerate a font directory.
 - Saved Wi-Fi networks now remain available when managing them from the File Transfer web page after a restart.

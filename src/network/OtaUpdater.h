@@ -15,6 +15,13 @@ class OtaUpdater {
  public:
   using ProgressCallback = void (*)(void* ctx);
 
+  enum InstallPhase {
+    IDLE,
+    DOWNLOADING,
+    VERIFYING,
+    INSTALLING,
+  };
+
   enum OtaUpdaterError {
     OK = 0,
     NO_UPDATE,
@@ -25,6 +32,7 @@ class OtaUpdater {
     OOM_ERROR,
     CANCELLED_ERROR,
     HASH_MISMATCH_ERROR,
+    INVALID_FIRMWARE_ERROR,
   };
 
   size_t getOtaSize() const { return otaSize; }
@@ -33,10 +41,15 @@ class OtaUpdater {
 
   size_t getTotalSize() const { return totalSize; }
 
+  InstallPhase getInstallPhase() const { return installPhase; }
+
   OtaUpdater() = default;
   bool isUpdateNewer() const;
   const std::string& getLatestVersion() const;
   OtaUpdaterError checkForUpdate();
   OtaUpdaterError installUpdate(ProgressCallback onProgress = nullptr, void* ctx = nullptr,
                                 std::atomic<bool>* cancelRequested = nullptr);
+
+ private:
+  InstallPhase installPhase = IDLE;
 };

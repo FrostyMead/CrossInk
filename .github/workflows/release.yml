@@ -82,6 +82,11 @@ jobs:
           CROSSINK_RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: pio run -e default
 
+      - name: Install simulator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libsdl2-dev
+
       - name: Smoke test Frost theme
         run: python3 scripts/run_simulator_smoke_test.py --env simulator --theme frost
 

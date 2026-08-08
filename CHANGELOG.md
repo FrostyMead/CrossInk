@@ -1,3 +1,9 @@
+## [FrostInk v1.0.2.1] - 2026-08-08
+
+### Fixed
+
+- OTA update checks now recognize firmware assets with ordinary three-part versions such as `firmware-x3-x4-v1.0.2.bin`.
+
 ## [FrostInk v1.0.2] - 2026-08-08
 
 ### Fixed

@@ -5,6 +5,7 @@ add_executable(ReleaseJsonParserTest
 )
 
 target_include_directories(ReleaseJsonParserTest PRIVATE
+  ${REPO_ROOT}
   ${REPO_ROOT}/lib/JsonParser
 )
 

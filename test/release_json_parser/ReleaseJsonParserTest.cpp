@@ -4,6 +4,7 @@
 #include <string>
 
 #include "lib/JsonParser/ReleaseJsonParser.h"
+#include "src/network/OtaAssetName.h"
 
 static int testsPassed = 0;
 static int testsFailed = 0;
@@ -159,7 +160,9 @@ static void feedChunked(ReleaseJsonParser& p, const char* json, size_t chunkSize
   }
 }
 
-static bool isX3X4FirmwareAsset(const char* assetName) { return strcmp(assetName, "firmware-x3-x4-v2.4.1.bin") == 0; }
+static bool isX3X4FirmwareAsset(const char* assetName) {
+  return ota_asset_name::matches(assetName, "firmware-x3-x4", "firmware-x3-x4.bin");
+}
 
 // ============================================================================
 // Tests
@@ -407,6 +410,22 @@ void testCustomAssetMatcher() {
   ASSERT_STREQ(p.getTagName(), "v2.4.1");
   ASSERT_STREQ(p.getFirmwareUrl(), "https://example.com/x3-x4.bin");
   ASSERT_EQ(p.getFirmwareSize(), 4321u);
+
+  printf("  passed\n");
+  PASS();
+}
+
+void testVersionedFirmwareAssetMatcher() {
+  printf("testVersionedFirmwareAssetMatcher...\n");
+
+  ASSERT_TRUE(isX3X4FirmwareAsset("firmware-x3-x4.bin"));
+  ASSERT_TRUE(isX3X4FirmwareAsset("firmware-x3-x4-v1.0.2.bin"));
+  ASSERT_TRUE(isX3X4FirmwareAsset("firmware-x3-x4-V1.0.2.bin"));
+  ASSERT_TRUE(isX3X4FirmwareAsset("firmware-x3-x4-v1.0.2.1.bin"));
+  ASSERT_TRUE(!isX3X4FirmwareAsset("firmware-x3-x4-v1.0.bin"));
+  ASSERT_TRUE(!isX3X4FirmwareAsset("firmware-x3-x4-v1.0.2.1.5.bin"));
+  ASSERT_TRUE(!isX3X4FirmwareAsset("firmware-x3-x4-v1.0.2.zip"));
+  ASSERT_TRUE(!isX3X4FirmwareAsset("firmware-sticky-v1.0.2.bin"));
 
   printf("  passed\n");
   PASS();
@@ -911,6 +930,7 @@ int main() {
   testFirmwareSha256();
   testFirmwareGithubDigestSha256();
   testFirmwareNonSha256DigestIgnored();
+  testVersionedFirmwareAssetMatcher();
   testCustomAssetMatcher();
   testAssetsBeforeTagName();
   testChunkedFeedingRealisticSmallChunks();

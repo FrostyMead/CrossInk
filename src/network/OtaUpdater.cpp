@@ -25,6 +25,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 #include "mbedtls/sha256.h"
 #include "network/FirmwareFlasher.h"
 #include "network/HttpDownloader.h"
+#include "network/OtaAssetName.h"
 #include "network/WifiPowerSaveGuard.h"
 
 namespace {
@@ -42,7 +43,6 @@ constexpr char firmwareAssetStem[] = "firmware";
 constexpr char firmwareAssetName[] = "firmware.bin";
 #endif
 
-constexpr char binSuffix[] = ".bin";
 constexpr char otaStagingDirectory[] = "/.crosspoint";
 constexpr char otaStagingPath[] = "/.crosspoint/frostink-ota.bin";
 constexpr size_t VERSION_SEGMENT_COUNT = 4;
@@ -116,12 +116,6 @@ int compareVersions(const char* latestVersion, const char* currentVersion) {
   return 0;
 }
 
-bool startsWith(const char* value, const char* prefix) {
-  if (value == nullptr || prefix == nullptr) return false;
-  const size_t prefixLength = strlen(prefix);
-  return strncmp(value, prefix, prefixLength) == 0;
-}
-
 char lowerHex(const uint8_t value) {
   return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('a' + value - 10);
 }
@@ -160,24 +154,7 @@ void formatSha256(const uint8_t digest[32], char output[65]) {
 bool isHttpsUrl(const std::string& url) { return url.rfind("https://", 0) == 0; }
 
 bool isMatchingFirmwareAssetName(const char* assetName) {
-  if (assetName == nullptr) return false;
-  if (strcmp(assetName, firmwareAssetName) == 0) return true;
-  if (!startsWith(assetName, firmwareAssetStem)) return false;
-
-  const char* version = assetName + strlen(firmwareAssetStem);
-  if (version[0] != '-' || (version[1] != 'v' && version[1] != 'V')) return false;
-  version += 2;
-
-  size_t segmentCount = 0;
-  while (segmentCount < VERSION_SEGMENT_COUNT) {
-    if (!isDigit(*version)) return false;
-    while (isDigit(*version)) ++version;
-    ++segmentCount;
-    if (*version != '.') break;
-    ++version;
-  }
-
-  return segmentCount >= 3 && strcmp(version, binSuffix) == 0;
+  return ota_asset_name::matches(assetName, firmwareAssetStem, firmwareAssetName);
 }
 
 /*

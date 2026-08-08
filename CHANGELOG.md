@@ -1,3 +1,9 @@
+## [FrostInk v1.0.2] - 2026-08-08
+
+### Fixed
+
+- OTA update checks now allow up to 30 seconds for GitHub to respond and report connection timeouts separately from other update failures.
+
 ## [v1.5.0] - 2026-08-04
 
 ### Added

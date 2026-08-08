@@ -13,6 +13,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 #include <strings.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -46,6 +47,7 @@ constexpr char otaStagingDirectory[] = "/.crosspoint";
 constexpr char otaStagingPath[] = "/.crosspoint/frostink-ota.bin";
 constexpr size_t VERSION_SEGMENT_COUNT = 4;
 constexpr size_t OTA_HASH_BUFFER_BYTES = 4096;
+constexpr int OTA_CHECK_TIMEOUT_MS = 30000;
 
 struct ParsedVersion {
   int segments[VERSION_SEGMENT_COUNT] = {0, 0, 0, 0};
@@ -301,6 +303,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
 
   esp_http_client_config_t client_config = {
       .url = latestReleaseUrl,
+      .timeout_ms = OTA_CHECK_TIMEOUT_MS,
       .event_handler = release_manifest_event_handler,
       // 4096 holds the API response headers; the 32KB body streams through the
       // parser in chunks so RX needn't be larger. TX only carries our GET.
@@ -330,9 +333,12 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
 
   esp_err = esp_http_client_perform(client_handle);
   if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_http_client_perform Failed : %s", esp_err_to_name(esp_err));
+    const int transportErrno = esp_http_client_get_errno(client_handle);
+    const bool timedOut =
+        esp_err == ESP_ERR_HTTP_EAGAIN || esp_err == ESP_ERR_HTTP_READ_TIMEOUT || transportErrno == ETIMEDOUT;
+    LOG_ERR("OTA", "esp_http_client_perform Failed: %s (errno=%d)", esp_err_to_name(esp_err), transportErrno);
     esp_http_client_cleanup(client_handle);
-    return HTTP_ERROR;
+    return timedOut ? UPDATE_CHECK_TIMEOUT_ERROR : HTTP_ERROR;
   }
 
   esp_err = esp_http_client_cleanup(client_handle);

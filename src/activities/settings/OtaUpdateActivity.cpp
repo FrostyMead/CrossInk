@@ -18,6 +18,7 @@ namespace {
 bool hasActiveWifiConnection() { return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
 StrId failureMessageFor(const OtaUpdater::OtaUpdaterError error) {
+  if (error == OtaUpdater::UPDATE_CHECK_TIMEOUT_ERROR) return StrId::STR_ERROR_CONNECTION_TIMEOUT;
   if (error == OtaUpdater::HASH_MISMATCH_ERROR) return StrId::STR_UPDATE_HASH_MISMATCH;
   if (error == OtaUpdater::INVALID_FIRMWARE_ERROR) return StrId::STR_INVALID_FIRMWARE;
   return StrId::STR_UPDATE_FAILED;

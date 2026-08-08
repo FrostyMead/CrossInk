@@ -119,7 +119,7 @@ class LyraTheme : public BaseTheme {
                            const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
                            float progressPercent = -1.0f, const GlobalReadingStats* globalStats = nullptr,
                            const char* currentChapterTitle = nullptr) const override;
-  void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
+  virtual void drawEmptyRecents(const GfxRenderer& renderer, Rect rect) const;
   bool showsFileIcons() const override { return true; }
 
  protected:

@@ -128,7 +128,7 @@ inline void drawUiTabBar(freeink::ui::Screen<MaxInteractions>& screen, freeink::
 
   props.tabInset = fui::Insets{};
   props.contentInset = fui::Insets{};
-  props.tabStyles = fui::plainStyles();
+  if (props.tabStyles.unset()) props.tabStyles = fui::plainStyles();
 
   const int16_t gap = props.gap > 0 ? props.gap : 0;
   const int16_t slotWidth = static_cast<int16_t>((rect.width - gap * (props.count - 1)) / props.count);

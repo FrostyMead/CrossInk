@@ -1138,6 +1138,7 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   // with an underline. The 1px rule under the band is always there.
   const bool tabsFocused = selectedSettingIndex == 0;
   const bool borderedTabs = metrics.tabBarAppearance == ThemeTabBarAppearance::BorderedText;
+  const bool frostTabs = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FROST;
   const bool roundedRaffTabs = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::ROUNDEDRAFF;
   tabProps.divider = true;
   fui::StyleSet tabStyles;
@@ -1149,6 +1150,22 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     tabStyles.selected.background = fui::Paint::solid(tabsFocused ? fui::Color::Black : fui::Color::DarkGray);
     tabStyles.selected.foreground = fui::Paint::solid(fui::Color::White);
     tabStyles.selected.radius = 18;
+    tabStyles.focused = tabStyles.selected;
+    tabStyles.active = tabStyles.selected;
+    tabProps.tabStyles = tabStyles;
+  } else if (frostTabs) {
+    // Frost uses a quiet rounded segmented-control treatment: high contrast
+    // while the tab band has focus, then a soft gray pill in the settings list.
+    tabStyles.explicitlySet = true;
+    tabStyles.normal.foreground = fui::Paint::solid(fui::Color::Black);
+    if (tabsFocused) {
+      tabStyles.selected.background = fui::Paint::solid(fui::Color::Black);
+      tabStyles.selected.foreground = fui::Paint::solid(fui::Color::White);
+    } else {
+      tabStyles.selected.background = fui::Paint::dither(fui::Color::LightGray);
+      tabStyles.selected.foreground = fui::Paint::solid(fui::Color::Black);
+    }
+    tabStyles.selected.radius = 16;
     tabStyles.focused = tabStyles.selected;
     tabStyles.active = tabStyles.selected;
     tabProps.tabStyles = tabStyles;

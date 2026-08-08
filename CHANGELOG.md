@@ -1,3 +1,11 @@
+## [FrostInk v1.0.3] - 2026-08-08
+
+### Changed
+
+- Frost now shows a branded, single-refresh transition stamp while opening Wi-Fi, OTA, and other reboot-backed tools.
+- Frost settings tabs now mark the active category with a rounded, segmented-control pill instead of bold text alone.
+- Frost navigation now uses soft-gray rounded selection, pill tabs, rounded key hints and dialogs, quieter headers, and a framed empty-library card for a minimal e-ink UI.
+
 ## [FrostInk v1.0.2.1] - 2026-08-08
 
 ### Fixed

@@ -8,28 +8,28 @@ constexpr ThemeMetrics makeValues() {
   values.headerHeight = 78;
   values.verticalSpacing = 12;
   values.contentSidePadding = 22;
-  values.listRowHeight = 40;
-  values.listWithSubtitleRowHeight = 62;
-  values.listRowGap = 4;
-  values.listRowRadius = 0;
+  values.listRowHeight = 44;
+  values.listWithSubtitleRowHeight = 66;
+  values.listRowGap = 6;
+  values.listRowRadius = 14;
   values.listInset = 18;
   values.listSidePadding = 12;
-  values.listSelectionStyle = 0;
+  values.listSelectionStyle = 1;
   values.listScrollWidth = 2;
   values.listTitleBold = true;
   values.headerSidePadding = 22;
-  values.headerUnderlineSize = 2;
-  values.menuRowHeight = 52;
-  values.menuSpacing = 4;
+  values.headerUnderlineSize = 1;
+  values.menuRowHeight = 54;
+  values.menuSpacing = 6;
   values.tabSpacing = 8;
-  values.tabBarHeight = 42;
-  values.tabBarAppearance = ThemeTabBarAppearance::BorderedText;
+  values.tabBarHeight = 46;
+  values.tabBarAppearance = ThemeTabBarAppearance::Pill;
   values.scrollBarWidth = 2;
   values.scrollBarRightOffset = 4;
   values.homeTopPadding = 52;
-  values.popupCornerRadius = 0;
-  values.optionPopupSelectionRadius = 0;
-  values.optionPopupSelectionLight = false;
+  values.popupCornerRadius = 18;
+  values.optionPopupSelectionRadius = 16;
+  values.optionPopupSelectionLight = true;
   return values;
 }
 
@@ -42,6 +42,7 @@ class FrostTheme final : public LyraTheme {
                      const char* rightLabel = nullptr) const override;
   void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                   bool selected) const override;
+  Rect drawLoadingPopup(const GfxRenderer& renderer, const char* message) const override;
   bool tabIndexFromPoint(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs, int x, int y,
                          int& index) const override;
   int getListRowStep(bool hasSubtitle, int rowHeightScale = 1) const override;
@@ -53,4 +54,5 @@ class FrostTheme final : public LyraTheme {
                 bool highlightValue, const std::function<bool(int index)>& rowDimmed = nullptr,
                 const std::function<bool(int index)>& isHeader = nullptr, int rowHeightScale = 1,
                 bool showSelection = true) const override;
+  void drawEmptyRecents(const GfxRenderer& renderer, Rect rect) const override;
 };

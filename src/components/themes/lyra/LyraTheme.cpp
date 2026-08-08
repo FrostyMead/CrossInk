@@ -252,8 +252,9 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
       selY += visualRowHeight(j);
       if (isHeaderRow(j + 1)) selY += sectionHeaderTopPadding;
     }
+    const int rowRadius = std::min(std::max(0, metrics.listRowRadius), rowHeight / 2);
     renderer.fillRoundedRect(rect.x + metrics.contentSidePadding, selY, contentWidth - metrics.contentSidePadding * 2,
-                             rowHeight, cornerRadius, invertSelectedRows ? Color::Black : Color::LightGray);
+                             rowHeight, rowRadius, invertSelectedRows ? Color::Black : Color::LightGray);
   }
 
   int textX = rect.x + metrics.contentSidePadding + hPaddingInSelection;
@@ -345,8 +346,9 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
     // Draw value
     if (!valueText.empty()) {
       if (selectedRow && highlightValue) {
+        const int valueRadius = std::min(std::max(0, metrics.listRowRadius), rowHeight / 2);
         renderer.fillRoundedRect(rect.x + contentWidth - metrics.contentSidePadding - hPaddingInSelection - valueWidth,
-                                 itemY, valueWidth + hPaddingInSelection, rowHeight, cornerRadius, Color::Black);
+                                 itemY, valueWidth + hPaddingInSelection, rowHeight, valueRadius, Color::Black);
       }
 
       const int valueY = rowSubtitle != nullptr ? itemY + 16 : centeredRowY(itemY, currentRowHeight, titleLineHeight);
@@ -377,24 +379,26 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   constexpr int wideButtonPositions[] = {65, 157, 291, 383};
   const int* buttonPositions = renderer.getScreenWidth() >= 528 ? wideButtonPositions : narrowButtonPositions;
   const char* labels[] = {btn1, btn2, btn3, btn4};
+  const auto& activeMetrics = UITheme::getInstance().getMetrics();
+  const int hintRadius = std::min(std::max(0, activeMetrics.listRowRadius), buttonHeight / 2);
+  const int inactiveHintRadius = std::min(hintRadius, smallButtonHeight / 2);
 
   for (int i = 0; i < 4; i++) {
     const int x = buttonPositions[i];
     if (labels[i] != nullptr && labels[i][0] != '\0') {
       TouchRegistry::getInstance().add(Rect{x, pageHeight - buttonY, buttonWidth, buttonHeight}, i,
                                        TouchRegistry::Button);
-      // Draw the filled background and border for a FULL-sized button
-      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, Color::White);
-      renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
+      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, hintRadius, Color::White);
+      renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, hintRadius, true, true, false,
                                false, true);
     } else {
       // Clear the previous full-sized hint before drawing the inactive marker.
       // Dictionary chaining can otherwise leave its old label visible.
       renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
       const int smallButtonY = pageHeight - smallButtonHeight;
-      renderer.fillRoundedRect(x, smallButtonY, buttonWidth, smallButtonHeight, cornerRadius, Color::White);
-      renderer.drawRoundedRect(x, smallButtonY, buttonWidth, smallButtonHeight, 1, cornerRadius, true, true, false,
-                               false, true);
+      renderer.fillRoundedRect(x, smallButtonY, buttonWidth, smallButtonHeight, inactiveHintRadius, Color::White);
+      renderer.drawRoundedRect(x, smallButtonY, buttonWidth, smallButtonHeight, 1, inactiveHintRadius, true, true,
+                               false, false, true);
     }
   }
 
@@ -616,6 +620,7 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
                                const std::function<const char*(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
   const auto& menuMetrics = UITheme::getInstance().getMetrics();
+  const bool invertSelection = menuMetrics.listSelectionStyle == 0;
 
   constexpr int maxVisibleItems = 7;
   const int pageItems = maxVisibleItems;
@@ -648,9 +653,17 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
         buttonMenuTouchTarget(tileRect, rect, i == buttonCount - 1, menuMetrics.menuSpacing), i, TouchRegistry::Item);
 
     const bool selected = selectedIndex == i;
+    const bool selectedInverted = selected && invertSelection;
 
     if (selected) {
-      renderer.fillRoundedRect(tileRect.x, tileRect.y, tileRect.width, tileRect.height, cornerRadius, Color::LightGray);
+      if (selectedInverted) {
+        renderer.fillRoundedRect(tileRect.x, tileRect.y, tileRect.width, tileRect.height,
+                                 std::min(std::max(0, menuMetrics.listRowRadius), tileRect.height / 2), Color::Black);
+      } else {
+        renderer.fillRoundedRect(tileRect.x, tileRect.y, tileRect.width, tileRect.height,
+                                 std::min(std::max(0, menuMetrics.listRowRadius), tileRect.height / 2),
+                                 Color::LightGray);
+      }
     }
 
     const char* label = buttonLabel != nullptr ? buttonLabel(i) : "";
@@ -674,20 +687,26 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
         const int polyX[5] = {iconX, iconX + ribbonWidth, iconX + ribbonWidth, centerX, iconX};
         const int polyY[5] = {iconY, iconY, iconY + ribbonHeight, iconY + ribbonHeight - notchSize,
                               iconY + ribbonHeight};
-        renderer.fillPolygon(polyX, polyY, 5, true);
+        renderer.fillPolygon(polyX, polyY, 5, !selectedInverted);
         textX += mainMenuIconSize + hPaddingInSelection + 2;
       } else if (icon == UIIcon::Chart) {
-        renderer.drawIcon(ChartIcon, textX, textY + 3 + mainMenuIconYOffset(icon), mainMenuIconSize, mainMenuIconSize);
+        if (selectedInverted) {
+          renderer.drawIconInverted(ChartIcon, textX, textY + 3 + mainMenuIconYOffset(icon), mainMenuIconSize,
+                                    mainMenuIconSize);
+        } else {
+          renderer.drawIcon(ChartIcon, textX, textY + 3 + mainMenuIconYOffset(icon), mainMenuIconSize,
+                            mainMenuIconSize);
+        }
         textX += mainMenuIconSize + hPaddingInSelection + 2;
       } else {
         const freeink::Icon* iconBitmap = iconForName(icon, mainMenuIconSize);
         if (iconBitmap != nullptr) {
-          drawLucideIcon(renderer, *iconBitmap, textX, textY + 3 + mainMenuIconYOffset(icon));
+          drawLucideIcon(renderer, *iconBitmap, textX, textY + 3 + mainMenuIconYOffset(icon), !selectedInverted);
           textX += mainMenuIconSize + hPaddingInSelection + 2;
         }
       }
     }
 
-    renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
+    renderer.drawText(UI_12_FONT_ID, textX, textY, label, !selectedInverted);
   }
 }

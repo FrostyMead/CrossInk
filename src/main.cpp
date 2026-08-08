@@ -374,7 +374,7 @@ void silentRestart() {
   // Without an overlay, users don't see the reboot and fire input through to
   // Home. Select on the default selectorIndex=0 then opens the most-recent
   // book, looking like a trampoline back to the reader they just exited.
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  GUI.drawLoadingPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   restartWithSilentToken();
 }
@@ -411,7 +411,7 @@ void silentRestartToReader() {
   silentRebootPayload = 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  GUI.drawLoadingPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   restartWithSilentToken();
 }
@@ -424,7 +424,7 @@ void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t paylo
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=network/%lu payload=%lu)", static_cast<unsigned long>(silentRebootTarget),
           static_cast<unsigned long>(payload));
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  GUI.drawLoadingPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   restartWithSilentToken();
 }

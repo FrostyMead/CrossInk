@@ -177,10 +177,11 @@ std::string getFileExtension(const std::string& filename);
 }  // namespace
 
 FileBrowserActivity::FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                         std::string initialPath, const Mode mode)
+                                         std::string initialPath, const Mode mode, const bool finishAtRoot)
     : Activity("FileBrowser", renderer, mappedInput),
       mode(mode),
       basepath(initialPath.empty() ? "/" : std::move(initialPath)),
+      finishAtRoot(finishAtRoot),
       uiTarget(makeUiTarget(renderer)),
       app(uiTarget, uiTarget.deviceContext()) {}
 
@@ -963,7 +964,7 @@ void FileBrowserActivity::navigateBack() {
     showFileSelection = true;
     topIndex = followListSelection(static_cast<int>(selectorIndex), 0, visibleRows, static_cast<int>(entryCount()));
     requestUpdate();
-  } else if (mode != Mode::Books) {
+  } else if (mode != Mode::Books || finishAtRoot) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));

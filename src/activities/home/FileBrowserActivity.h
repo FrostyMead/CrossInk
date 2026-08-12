@@ -67,6 +67,9 @@ class FileBrowserActivity final : public Activity {
   std::array<size_t, INDEX_ROW_CACHE_SIZE> indexCachedRows{};
   bool usingIndex = false;
   bool fileListMemoryLimited = false;
+  // Settings launches the browser as a child activity so Back at the SD root
+  // returns to Settings instead of replacing the whole stack with Home.
+  bool finishAtRoot = false;
 
   freeink::ui::GfxRendererTarget uiTarget;  // must precede `app`: the app holds a reference to it
   UiApp app;
@@ -93,7 +96,7 @@ class FileBrowserActivity final : public Activity {
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
-                               Mode mode = Mode::Books);
+                               Mode mode = Mode::Books, bool finishAtRoot = false);
   void onEnter() override;
   void onExit() override;
   void loop() override;

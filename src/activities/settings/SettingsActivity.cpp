@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cctype>
@@ -27,6 +28,7 @@
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
+#include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -149,7 +151,7 @@ std::string formatCompactDuration(const uint32_t seconds) {
 
 void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, const int pageHeight,
                              const ThemeMetrics& metrics) {
-  const std::string label = "CrossInk " CROSSINK_VERSION;
+  const std::string label = "FrostInk " CROSSINK_VERSION;
   const int maxWidth = pageWidth - systemVersionFooterSideMargin * 2;
   const int bottomLineY =
       pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - systemVersionFooterBottomInset;
@@ -911,6 +913,16 @@ void SettingsActivity::toggleCurrentSetting() {
     auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
 
     switch (setting.action) {
+      case SettingAction::FileBrowser:
+        // One browser activity allocation is retained until Back returns here;
+        // its file buffers are separately fallible in FileBrowserActivity::onEnter().
+        if (auto browser = makeUniqueNoThrow<FileBrowserActivity>(renderer, mappedInput, "/",
+                                                                  FileBrowserActivity::Mode::Books, true)) {
+          startActivityForResult(std::move(browser), resultHandler);
+        } else {
+          LOG_ERR("SET", "OOM: File Browser activity (%u bytes)", static_cast<unsigned>(sizeof(FileBrowserActivity)));
+        }
+        break;
       case SettingAction::RemapFrontButtons:
         startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput, false), resultHandler);
         break;
@@ -1138,6 +1150,7 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   // with an underline. The 1px rule under the band is always there.
   const bool tabsFocused = selectedSettingIndex == 0;
   const bool borderedTabs = metrics.tabBarAppearance == ThemeTabBarAppearance::BorderedText;
+  const bool frostTabs = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FROST;
   const bool roundedRaffTabs = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::ROUNDEDRAFF;
   tabProps.divider = true;
   fui::StyleSet tabStyles;
@@ -1149,6 +1162,22 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     tabStyles.selected.background = fui::Paint::solid(tabsFocused ? fui::Color::Black : fui::Color::DarkGray);
     tabStyles.selected.foreground = fui::Paint::solid(fui::Color::White);
     tabStyles.selected.radius = 18;
+    tabStyles.focused = tabStyles.selected;
+    tabStyles.active = tabStyles.selected;
+    tabProps.tabStyles = tabStyles;
+  } else if (frostTabs) {
+    // Frost uses a quiet rounded segmented-control treatment: high contrast
+    // while the tab band has focus, then a soft gray pill in the settings list.
+    tabStyles.explicitlySet = true;
+    tabStyles.normal.foreground = fui::Paint::solid(fui::Color::Black);
+    if (tabsFocused) {
+      tabStyles.selected.background = fui::Paint::solid(fui::Color::Black);
+      tabStyles.selected.foreground = fui::Paint::solid(fui::Color::White);
+    } else {
+      tabStyles.selected.background = fui::Paint::dither(fui::Color::LightGray);
+      tabStyles.selected.foreground = fui::Paint::solid(fui::Color::Black);
+    }
+    tabStyles.selected.radius = 16;
     tabStyles.focused = tabStyles.selected;
     tabStyles.active = tabStyles.selected;
     tabProps.tabStyles = tabStyles;

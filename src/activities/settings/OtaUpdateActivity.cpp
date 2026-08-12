@@ -18,7 +18,9 @@ namespace {
 bool hasActiveWifiConnection() { return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
 StrId failureMessageFor(const OtaUpdater::OtaUpdaterError error) {
+  if (error == OtaUpdater::UPDATE_CHECK_TIMEOUT_ERROR) return StrId::STR_ERROR_CONNECTION_TIMEOUT;
   if (error == OtaUpdater::HASH_MISMATCH_ERROR) return StrId::STR_UPDATE_HASH_MISMATCH;
+  if (error == OtaUpdater::INVALID_FIRMWARE_ERROR) return StrId::STR_INVALID_FIRMWARE;
   return StrId::STR_UPDATE_FAILED;
 }
 
@@ -138,11 +140,13 @@ void OtaUpdateActivity::render(RenderLock&&) {
   float updaterProgress = 0;
   if (state == UPDATE_IN_PROGRESS) {
     updaterProgress = static_cast<float>(updater.getProcessedSize()) / static_cast<float>(updater.getTotalSize());
+    const auto updaterPhase = updater.getInstallPhase();
     // Only update every 2% at the most
-    if (static_cast<int>(updaterProgress * 50) == lastUpdaterPercentage / 2) {
+    if (updaterPhase == lastUpdaterPhase && static_cast<int>(updaterProgress * 50) == lastUpdaterPercentage / 2) {
       return;
     }
     lastUpdaterPercentage = static_cast<int>(updaterProgress * 100);
+    lastUpdaterPhase = updaterPhase;
   }
 
   if (state == CHECKING_FOR_UPDATE) {
@@ -167,7 +171,13 @@ void OtaUpdateActivity::render(RenderLock&&) {
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == UPDATE_IN_PROGRESS) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATING));
+    StrId progressLabel = StrId::STR_UPDATING;
+    if (updater.getInstallPhase() == OtaUpdater::DOWNLOADING) {
+      progressLabel = StrId::STR_DOWNLOADING;
+    } else if (updater.getInstallPhase() == OtaUpdater::VERIFYING) {
+      progressLabel = StrId::STR_VALIDATING_FIRMWARE;
+    }
+    renderer.drawCenteredText(UI_10_FONT_ID, top, I18n::getInstance().get(progressLabel));
 
     int y = top + height + metrics.verticalSpacing;
     GUI.drawProgressBar(
@@ -176,12 +186,9 @@ void OtaUpdateActivity::render(RenderLock&&) {
         static_cast<int>(updaterProgress * 100), 100);
 
     y += metrics.progressBarHeight + metrics.verticalSpacing;
-    // Percent label is drawn by BaseTheme::drawProgressBar; this slot is left intentionally empty
-    // so the bytes line below stays at the same Y it was at when the activity drew its own percent.
+    // Percent label is drawn by BaseTheme::drawProgressBar; this slot is left intentionally empty.
     y += height + metrics.verticalSpacing;
-    renderer.drawCenteredText(
-        UI_10_FONT_ID, y,
-        (std::to_string(updater.getProcessedSize()) + " / " + std::to_string(updater.getTotalSize())).c_str());
+    renderer.drawCenteredText(UI_10_FONT_ID, y, tr(STR_FIRMWARE_UPDATE_DO_NOT_POWER_OFF));
   } else if (state == NO_UPDATE) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NO_UPDATE), true, EpdFontFamily::BOLD);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");

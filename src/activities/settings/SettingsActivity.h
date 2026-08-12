@@ -34,6 +34,7 @@ enum class SettingAction {
   SystemFilesCache,
   SystemReadingStats,
   SystemGlobalStats,
+  FileBrowser,
   Network,
   BackupStats,
   ResetGlobalStats,

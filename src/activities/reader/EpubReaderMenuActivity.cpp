@@ -72,6 +72,7 @@ struct ReaderLayoutSettingsSnapshot {
   uint8_t embeddedStyle;
   uint8_t hyphenationEnabled;
   uint8_t textAntiAliasing;
+  uint8_t readerInkWeight;
   uint8_t readerDarkMode;
   uint8_t imageRendering;
   uint8_t extraParagraphSpacing;
@@ -89,8 +90,9 @@ struct ReaderLayoutSettingsSnapshot {
            orientation == other.orientation && screenMargin == other.screenMargin &&
            publisherPageNumbers == other.publisherPageNumbers && paragraphAlignment == other.paragraphAlignment &&
            embeddedStyle == other.embeddedStyle && hyphenationEnabled == other.hyphenationEnabled &&
-           textAntiAliasing == other.textAntiAliasing && readerDarkMode == other.readerDarkMode &&
-           imageRendering == other.imageRendering && extraParagraphSpacing == other.extraParagraphSpacing &&
+           textAntiAliasing == other.textAntiAliasing && readerInkWeight == other.readerInkWeight &&
+           readerDarkMode == other.readerDarkMode && imageRendering == other.imageRendering &&
+           extraParagraphSpacing == other.extraParagraphSpacing &&
            forceParagraphIndents == other.forceParagraphIndents && bionicReadingEnabled == other.bionicReadingEnabled &&
            guideReadingEnabled == other.guideReadingEnabled && epubRenderMode == other.epubRenderMode &&
            std::strncmp(sdFontFamilyName, other.sdFontFamilyName, sizeof(sdFontFamilyName)) == 0;
@@ -100,12 +102,25 @@ struct ReaderLayoutSettingsSnapshot {
 
 ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
   ReaderLayoutSettingsSnapshot snapshot{
-      SETTINGS.fontFamily,           SETTINGS.readerFontPointSize,   SETTINGS.lineHeightPercent,
-      SETTINGS.wordSpacing,          SETTINGS.orientation,           SETTINGS.screenMargin,
-      SETTINGS.publisherPageNumbers, SETTINGS.paragraphAlignment,    SETTINGS.embeddedStyle,
-      SETTINGS.hyphenationEnabled,   SETTINGS.textAntiAliasing,      SETTINGS.readerDarkMode,
-      SETTINGS.imageRendering,       SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
-      SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled,   SETTINGS.epubRenderMode,
+      SETTINGS.fontFamily,
+      SETTINGS.readerFontPointSize,
+      SETTINGS.lineHeightPercent,
+      SETTINGS.wordSpacing,
+      SETTINGS.orientation,
+      SETTINGS.screenMargin,
+      SETTINGS.publisherPageNumbers,
+      SETTINGS.paragraphAlignment,
+      SETTINGS.embeddedStyle,
+      SETTINGS.hyphenationEnabled,
+      SETTINGS.textAntiAliasing,
+      SETTINGS.readerInkWeight,
+      SETTINGS.readerDarkMode,
+      SETTINGS.imageRendering,
+      SETTINGS.extraParagraphSpacing,
+      SETTINGS.forceParagraphIndents,
+      SETTINGS.bionicReadingEnabled,
+      SETTINGS.guideReadingEnabled,
+      SETTINGS.epubRenderMode,
   };
   std::strncpy(snapshot.sdFontFamilyName, SETTINGS.sdFontFamilyName, sizeof(snapshot.sdFontFamilyName) - 1);
   snapshot.sdFontFamilyName[sizeof(snapshot.sdFontFamilyName) - 1] = '\0';
@@ -274,9 +289,9 @@ void EpubReaderMenuActivity::dictionaryFontChangedForMenu(void* ctx, const char*
     self->dictionaryFontPointSize = pointSize;
   }
   if (self->dictionaryFontChangedCallback) {
-    self->dictionaryFontChangedCallback(
-        self->dictionaryFontChangedContext,
-        self->hasDictionaryFontOverride ? self->dictionaryFontFamilyName : nullptr, self->dictionaryFontPointSize);
+    self->dictionaryFontChangedCallback(self->dictionaryFontChangedContext,
+                                        self->hasDictionaryFontOverride ? self->dictionaryFontFamilyName : nullptr,
+                                        self->dictionaryFontPointSize);
   }
 }
 
@@ -334,22 +349,21 @@ bool EpubReaderMenuActivity::activateSelectedItem() {
 
   if (selectedAction == MenuAction::READER_OPTIONS) {
     const auto before = captureReaderLayoutSettings();
-    startActivityForResult(
-        std::make_unique<ReaderOptionsActivity>(
-            renderer, mappedInput, saveReaderSettingsCallback, saveReaderSettingsContext, saveGlobalSettingsCallback,
-            saveGlobalSettingsContext, beginGlobalSettingsEditCallback, beginGlobalSettingsEditContext,
-            endGlobalSettingsEditCallback, endGlobalSettingsEditContext, stablePageNumbersAvailable,
-            dictionaryFontFamilyName, dictionaryFontPointSize, hasDictionaryFontOverride, dictionaryFontChangedForMenu,
-            this),
-        [this, before](const ActivityResult& result) {
-          settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
-          pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
-          if (result.isCancelled) {
-            finishCancelled();
-            return;
-          }
-          requestUpdate();
-        });
+    startActivityForResult(std::make_unique<ReaderOptionsActivity>(
+                               renderer, mappedInput, saveReaderSettingsCallback, saveReaderSettingsContext,
+                               saveGlobalSettingsCallback, saveGlobalSettingsContext, beginGlobalSettingsEditCallback,
+                               beginGlobalSettingsEditContext, endGlobalSettingsEditCallback,
+                               endGlobalSettingsEditContext, stablePageNumbersAvailable, dictionaryFontFamilyName,
+                               dictionaryFontPointSize, hasDictionaryFontOverride, dictionaryFontChangedForMenu, this),
+                           [this, before](const ActivityResult& result) {
+                             settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
+                             pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
+                             if (result.isCancelled) {
+                               finishCancelled();
+                               return;
+                             }
+                             requestUpdate();
+                           });
     return true;
   }
 

@@ -42,7 +42,7 @@ namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
 // Cached frames include all Home visuals, including the menu icons. Bump this
 // whenever their rendering changes so stale snapshots are rebuilt after OTA.
-constexpr uint16_t CAROUSEL_CACHE_VERSION = 5;
+constexpr uint16_t CAROUSEL_CACHE_VERSION = 6;
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 constexpr uint32_t CAROUSEL_FRAME_MIN_FREE_AFTER_ALLOC = 64U * 1024U;
@@ -51,9 +51,9 @@ constexpr unsigned long HOME_BOOK_SWAP_LONG_PRESS_MS = 1000;
 constexpr int HOME_BOOK_SWAP_RECENT_COUNT = 2;
 
 enum class HomeMenuAction {
-  BrowseFiles,
   ContinueReading,
-  RecentBooks,
+  Books,
+  Comics,
   OpdsBrowser,
   ReadingStats,
   Bookmarks,
@@ -68,7 +68,7 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 8;
+  static constexpr int kCapacity = 9;
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -261,8 +261,8 @@ const char* savedItemsLabel(bool hasBookmarks, bool hasClippings) {
 
 void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks,
                          bool hasClippings) {
-  items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
-  items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
+  items.push({tr(STR_BOOKS), Book, HomeMenuAction::Books});
+  items.push({tr(STR_COMICS), Library, HomeMenuAction::Comics});
 
   if (hasOpdsServers) {
     items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
@@ -286,7 +286,8 @@ HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bo
 
 HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks, bool hasClippings) {
   HomeMenuEntries items;
-  items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
+  items.push({tr(STR_BOOKS), Book, HomeMenuAction::Books});
+  items.push({tr(STR_COMICS), Library, HomeMenuAction::Comics});
 
   if (hasOpdsServers) {
     items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
@@ -315,9 +316,11 @@ HomeMenuEntries buildSelectableHomeMenuItems(bool hasOpdsServers, bool hasReadin
 HomeMenuAction homeActionForInitialMenuItem(HomeMenuItem item) {
   switch (item) {
     case HomeMenuItem::FILE_BROWSER:
-      return HomeMenuAction::BrowseFiles;
+      return HomeMenuAction::Books;
     case HomeMenuItem::RECENTS:
-      return HomeMenuAction::RecentBooks;
+      return HomeMenuAction::Books;
+    case HomeMenuItem::COMICS:
+      return HomeMenuAction::Comics;
     case HomeMenuItem::OPDS_BROWSER:
       return HomeMenuAction::OpdsBrowser;
     case HomeMenuItem::FILE_TRANSFER:
@@ -593,7 +596,7 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
 
 int HomeActivity::getMenuItemCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 4;  // Books, Comics, File transfer, Settings
   if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     count += getVisibleRecentBookCount();
   } else if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -848,6 +851,14 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
 void HomeActivity::onEnter() {
   Activity::onEnter();
+
+  // Make the two library destinations visible in File Transfer immediately,
+  // even before either shelf has been opened for the first time.
+  for (const char* root : {"/Books", "/Comics"}) {
+    if (!Storage.exists(root) && !Storage.mkdir(root, true)) {
+      LOG_ERR("HOME", "failed to create library root: %s", root);
+    }
+  }
 
   hasOpdsServers = OPDS_STORE.hasServers();
   const bool isCarouselTheme =
@@ -1430,11 +1441,11 @@ void HomeActivity::loop() {
 
       auto activateMinimalMenuAction = [this, &menuItems]() {
         switch (menuItems[minimalMenuIndex].action) {
-          case HomeMenuAction::BrowseFiles:
-            onFileBrowserOpen();
+          case HomeMenuAction::Books:
+            onBooksOpen();
             break;
-          case HomeMenuAction::RecentBooks:
-            onRecentsOpen();
+          case HomeMenuAction::Comics:
+            onComicsOpen();
             break;
           case HomeMenuAction::OpdsBrowser:
             onOpdsBrowserOpen();
@@ -1505,7 +1516,7 @@ void HomeActivity::loop() {
         return;
       case MappedInputManager::SwipeDir::Right:
         minimalHomeNavIndex = 1;
-        onFileBrowserOpen();
+        onBooksOpen();
         return;
       case MappedInputManager::SwipeDir::Up:
         minimalHomeNavIndex = 0;
@@ -1550,7 +1561,7 @@ void HomeActivity::loop() {
           requestUpdate();
           break;
         case 1:
-          onFileBrowserOpen();
+          onBooksOpen();
           break;
         case 2:
           onSettingsOpen();
@@ -1637,14 +1648,14 @@ void HomeActivity::loop() {
 
   auto activateHomeMenuAction = [this](const HomeMenuAction action) {
     switch (action) {
-      case HomeMenuAction::BrowseFiles:
-        onFileBrowserOpen();
-        break;
       case HomeMenuAction::ContinueReading:
         onContinueReading();
         break;
-      case HomeMenuAction::RecentBooks:
-        onRecentsOpen();
+      case HomeMenuAction::Books:
+        onBooksOpen();
+        break;
+      case HomeMenuAction::Comics:
+        onComicsOpen();
         break;
       case HomeMenuAction::OpdsBrowser:
         onOpdsBrowserOpen();
@@ -1923,7 +1934,7 @@ void HomeActivity::render(RenderLock&&) {
     }
     if (showMinimalHomeButtonHints(mappedInput)) {
       MinimalTheme::setHomeButtonHintSelection(minimalHomeNavIndex);
-      GUI.drawButtonHints(renderer, tr(STR_MENU), tr(STR_BROWSE), tr(STR_SETTINGS_SHORT),
+      GUI.drawButtonHints(renderer, tr(STR_MENU), tr(STR_BOOKS), tr(STR_SETTINGS_SHORT),
                           recentBooks.empty() ? "" : tr(STR_READ));
     }
 
@@ -2098,8 +2109,6 @@ void HomeActivity::onSelectBook(const std::string& path) {
   activityManager.goToReader(path);
 }
 
-void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
-
 void HomeActivity::onContinueReading() {
   if (recentBooks.empty()) return;
 
@@ -2111,7 +2120,9 @@ void HomeActivity::onContinueReading() {
   }
 }
 
-void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+void HomeActivity::onBooksOpen() { activityManager.goToBooks(); }
+
+void HomeActivity::onComicsOpen() { activityManager.goToComics(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 

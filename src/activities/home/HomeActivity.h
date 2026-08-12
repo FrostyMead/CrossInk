@@ -76,9 +76,9 @@ class HomeActivity final : public Activity {
   const HomeMenuItem initialMenuItem;
 
   void onSelectBook(const std::string& path);
-  void onFileBrowserOpen();
   void onContinueReading();
-  void onRecentsOpen();
+  void onBooksOpen();
+  void onComicsOpen();
   void onSettingsOpen();
   void onFileTransferOpen();
   void onOpdsBrowserOpen();

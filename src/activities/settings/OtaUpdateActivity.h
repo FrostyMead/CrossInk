@@ -23,6 +23,7 @@ class OtaUpdateActivity : public Activity {
   State state = WIFI_SELECTION;
   ScreenTransitionRefresh screenTransitionRefresh;
   unsigned int lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
+  OtaUpdater::InstallPhase lastUpdaterPhase = OtaUpdater::IDLE;
   StrId failureMessage = StrId::STR_UPDATE_FAILED;
   OtaUpdater updater;
 

@@ -3,7 +3,7 @@ const currentPath = decodeURIComponent(new URLSearchParams(window.location.searc
 
 if (currentPath !== "/") {
   const leaf = currentPath.split("/").filter(Boolean).pop();
-  if (leaf) document.title = leaf + " - Files - CrossInk Reader";
+  if (leaf) document.title = leaf + " - Files - FrostInk";
 }
 
 // Network status monitoring
@@ -100,6 +100,7 @@ async function hydrate() {
       if (e.target === overlay) {
         // Call the appropriate close function for each modal to ensure cleanup
         if (overlay.id === "uploadModal") return closeUploadModal();
+        if (overlay.id === "mangaOptimizerModal") return closeMangaOptimizer();
         if (overlay.id === "folderModal") return closeFolderModal();
         if (overlay.id === "deleteModal") return closeDeleteModal();
         if (overlay.id === "renameModal") return closeRenameModal();
@@ -482,6 +483,31 @@ function setOverlap(value) {
   updateUploadSettingsPersistence();
 }
 
+const EPUB_IMAGE_PROFILES = Object.freeze({
+  natural: { gamma: 100, contrast: 12, sharpness: 30 },
+  lineart: { gamma: 88, contrast: 28, sharpness: 62 },
+  photo: { gamma: 106, contrast: 8, sharpness: 20 },
+});
+
+function setEpubImageProfile(value) {
+  const profile = EPUB_IMAGE_PROFILES[value] || EPUB_IMAGE_PROFILES.natural;
+  document.getElementById("epubImageProfile").value = value in EPUB_IMAGE_PROFILES ? value : "natural";
+  document.getElementById("epubGamma").value = profile.gamma;
+  document.getElementById("epubContrast").value = profile.contrast;
+  document.getElementById("epubSharpness").value = profile.sharpness;
+  updateEpubToneControls();
+}
+
+function updateEpubToneControls() {
+  const gamma = parseInt(document.getElementById("epubGamma")?.value || "100", 10);
+  const contrast = parseInt(document.getElementById("epubContrast")?.value || "12", 10);
+  const sharpness = parseInt(document.getElementById("epubSharpness")?.value || "30", 10);
+  document.getElementById("epubGammaValue").textContent = (gamma / 100).toFixed(2);
+  document.getElementById("epubContrastValue").textContent = `${contrast}%`;
+  document.getElementById("epubSharpnessValue").textContent = `${sharpness}%`;
+  updateUploadSettingsPersistence();
+}
+
 // ============================================================================
 // Image Picker Functions
 // ============================================================================
@@ -724,6 +750,7 @@ async function extractImagesForPreview(file) {
       fitsScreen: fitsScreen,
       canHSplit: canHSplit,
       canVSplit: canVSplit,
+      data: data,
     });
   }
 
@@ -984,16 +1011,30 @@ function renderImageGrid() {
       item.title = `${img.width}×${img.height} - ${stateText}${partsText}`;
       item.innerHTML = `
           <span class="image-state-badge">${stateLabels[state] || "•"}</span>
+          <button class="image-optimizer-preview-btn" type="button" title="Preview optimized X4 output">Preview</button>
           <div class="image-preview-overlay">
             ${splitLinesHtml}
           </div>
           <img src="${img.dataUrl}" alt="${img.name}" loading="lazy">
           <div class="image-name">${img.name}</div>
         `;
+      item.querySelector(".image-optimizer-preview-btn").onclick = (event) => {
+        event.stopPropagation();
+        previewOptimizedEpubImage(img).catch((error) => alert(`Preview failed: ${error.message}`));
+      };
     }
 
     imageGrid.appendChild(item);
   });
+}
+
+let optimizedPreviewObjectUrl = "";
+async function previewOptimizedEpubImage(image) {
+  const result = await processImage(image.data, getImageState(image.path), image.path);
+  if (!result.parts.length) return;
+  if (optimizedPreviewObjectUrl) URL.revokeObjectURL(optimizedPreviewObjectUrl);
+  optimizedPreviewObjectUrl = URL.createObjectURL(new Blob([result.parts[0].data], { type: "image/jpeg" }));
+  openImagePreview(optimizedPreviewObjectUrl, `${image.name} — optimized X4 preview${result.parts.length > 1 ? ` (part 1 of ${result.parts.length})` : ""}`);
 }
 
 /**
@@ -1454,6 +1495,12 @@ const DEFAULT_UPLOAD_SETTINGS = Object.freeze({
   convertBeforeUpload: false,
   renameFromMetadata: false,
   splitLongSections: true,
+  frostClean: true,
+  epubImageProfile: "natural",
+  epubGamma: 100,
+  epubContrast: 12,
+  epubSharpness: 30,
+  epubAutoLevels: true,
   quality: DEFAULT_JPEG_QUALITY,
   referenceCharacters: X_DEFAULT_REFERENCE_CHARACTERS_PER_PAGE,
   deviceTarget: "auto",
@@ -1468,6 +1515,12 @@ function getCurrentUploadSettings() {
     convertBeforeUpload: !!document.getElementById("convertBeforeUpload")?.checked,
     renameFromMetadata: !!document.getElementById("renameFromMetadataToggle")?.checked,
     splitLongSections: !!document.getElementById("splitLongSectionsToggle")?.checked,
+    frostClean: !!document.getElementById("frostCleanToggle")?.checked,
+    epubImageProfile: document.getElementById("epubImageProfile")?.value || "natural",
+    epubGamma: parseInt(document.getElementById("epubGamma")?.value || "100", 10),
+    epubContrast: parseInt(document.getElementById("epubContrast")?.value || "12", 10),
+    epubSharpness: parseInt(document.getElementById("epubSharpness")?.value || "30", 10),
+    epubAutoLevels: !!document.getElementById("epubAutoLevelsToggle")?.checked,
     quality: parseInt(document.getElementById("qualitySlider")?.value || JPEG_QUALITY, 10),
     referenceCharacters: parseInt(
       document.getElementById("referenceCharactersInput")?.value || X_DEFAULT_REFERENCE_CHARACTERS_PER_PAGE,
@@ -1487,6 +1540,8 @@ function applyUploadSettings(settings = {}) {
     document.getElementById("convertBeforeUpload").checked = !!merged.convertBeforeUpload;
     document.getElementById("renameFromMetadataToggle").checked = !!merged.renameFromMetadata;
     document.getElementById("splitLongSectionsToggle").checked = !!merged.splitLongSections;
+    document.getElementById("frostCleanToggle").checked = !!merged.frostClean;
+    document.getElementById("epubAutoLevelsToggle").checked = !!merged.epubAutoLevels;
     document.getElementById("export-log-checkbox").checked = !!merged.exportLog;
     document.getElementById("rememberUploadSettings").checked = !!settings.rememberSettings;
     document.getElementById("referenceCharactersInput").value = normalizedReferenceCharactersPerPage(
@@ -1494,6 +1549,12 @@ function applyUploadSettings(settings = {}) {
     );
 
     setQualityPreset(Math.max(1, Math.min(95, parseInt(merged.quality, 10) || DEFAULT_JPEG_QUALITY)));
+    const imageProfile = merged.epubImageProfile in EPUB_IMAGE_PROFILES ? merged.epubImageProfile : "natural";
+    document.getElementById("epubImageProfile").value = imageProfile;
+    document.getElementById("epubGamma").value = Math.max(70, Math.min(135, parseInt(merged.epubGamma, 10) || 100));
+    document.getElementById("epubContrast").value = Math.max(0, Math.min(40, parseInt(merged.epubContrast, 10) || 0));
+    document.getElementById("epubSharpness").value = Math.max(0, Math.min(100, parseInt(merged.epubSharpness, 10) || 0));
+    updateEpubToneControls();
     setDeviceTarget(["auto", "X3", "X4"].includes(merged.deviceTarget) ? merged.deviceTarget : "auto");
     setHandedness(merged.handedness === "left" ? "left" : "right");
     setOverlap([5, 10, 15].includes(Number(merged.overlap)) ? Number(merged.overlap) : 5);
@@ -1961,7 +2022,7 @@ function exportLogToFile(filename = null, isBatch = false) {
   }
   // Extract text from log entries
   const entries = logContainer.querySelectorAll(".log-entry");
-  let logText = `CrossInk Reader ${crosspointVersion} - EPUB Conversion Log\n`;
+  let logText = `FrostInk ${crosspointVersion} - EPUB Conversion Log\n`;
   logText += `Generated: ${new Date().toLocaleString()}\n`;
   logText += `${"=".repeat(60)}\n\n`;
 
@@ -3460,18 +3521,80 @@ function flattenCanvasAlpha(ctx, width, height) {
   ctx.putImageData(imageData, 0, 0);
 }
 
-// Apply grayscale to canvas image data
+function getEpubToneSettings() {
+  return {
+    gamma: Math.max(0.7, Math.min(1.35, parseInt(document.getElementById("epubGamma")?.value || "100", 10) / 100)),
+    contrast: Math.max(0, Math.min(0.4, parseInt(document.getElementById("epubContrast")?.value || "12", 10) / 100)),
+    sharpness: Math.max(0, Math.min(1, parseInt(document.getElementById("epubSharpness")?.value || "30", 10) / 100)),
+    autoLevels: !!document.getElementById("epubAutoLevelsToggle")?.checked,
+  };
+}
+
+function percentileFromHistogram(histogram, total, percentile) {
+  const target = total * percentile;
+  let seen = 0;
+  for (let value = 0; value < histogram.length; value++) {
+    seen += histogram[value];
+    if (seen >= target) return value;
+  }
+  return 255;
+}
+
+function sharpenGrayscaleImageData(data, width, height, amount) {
+  if (amount <= 0 || width < 3 || height < 3) return;
+  const source = new Uint8ClampedArray(data);
+  const strength = amount * 0.9;
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const index = (y * width + x) * 4;
+      const blur =
+        (source[index - 4] + source[index + 4] + source[index - width * 4] + source[index + width * 4]) / 4;
+      const sharpened = Math.max(0, Math.min(255, Math.round(source[index] + (source[index] - blur) * strength)));
+      data[index] = sharpened;
+      data[index + 1] = sharpened;
+      data[index + 2] = sharpened;
+    }
+  }
+}
+
+// Apply a panel-oriented grayscale/tone pipeline after the final resize.
 function applyGrayscale(ctx, width, height) {
   flattenCanvasAlpha(ctx, width, height);
   if (!ENABLE_GRAYSCALE) return;
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
+  const settings = getEpubToneSettings();
+  const histogram = new Uint32Array(256);
   for (let i = 0; i < data.length; i += 4) {
     const gray = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+    histogram[gray]++;
     data[i] = gray;
     data[i + 1] = gray;
     data[i + 2] = gray;
   }
+  let blackPoint = 0;
+  let whitePoint = 255;
+  if (settings.autoLevels) {
+    const total = width * height;
+    const candidateBlack = percentileFromHistogram(histogram, total, 0.008);
+    const candidateWhite = percentileFromHistogram(histogram, total, 0.992);
+    if (candidateWhite - candidateBlack >= 48) {
+      blackPoint = candidateBlack;
+      whitePoint = candidateWhite;
+    }
+  }
+  const range = Math.max(1, whitePoint - blackPoint);
+  const contrastScale = 1 + settings.contrast;
+  for (let i = 0; i < data.length; i += 4) {
+    let normalized = Math.max(0, Math.min(1, (data[i] - blackPoint) / range));
+    normalized = Math.max(0, Math.min(1, (normalized - 0.5) * contrastScale + 0.5));
+    normalized = Math.pow(normalized, 1 / settings.gamma);
+    const adjusted = Math.round(normalized * 255);
+    data[i] = adjusted;
+    data[i + 1] = adjusted;
+    data[i + 2] = adjusted;
+  }
+  sharpenGrayscaleImageData(data, width, height, settings.sharpness);
   ctx.putImageData(imageData, 0, 0);
 }
 
@@ -3929,10 +4052,112 @@ function imageMimeType(filename) {
   return "image/jpeg";
 }
 
+const FROST_CLEAN_STYLE = `<style type="text/css" data-frostink="clean">
+html,body{background:#fff!important;color:#000!important;max-width:100%!important}
+body{margin:0!important;padding:0!important;font-size:1em!important;line-height:1.42!important}
+p{max-width:100%!important;line-height:1.42!important;widows:2;orphans:2;hyphens:auto}
+h1,h2,h3,h4,h5,h6{max-width:100%!important;line-height:1.18!important;text-indent:0!important;page-break-after:avoid;break-after:avoid}
+h1{font-size:1.55em!important}h2{font-size:1.35em!important}h3{font-size:1.18em!important}
+blockquote{margin-left:1em!important;margin-right:.5em!important}
+pre,code{white-space:pre-wrap!important;overflow-wrap:anywhere}
+img,svg{max-width:100%!important;height:auto!important;object-fit:contain}
+[class*="dropcap" i],[class*="drop-cap" i],[class*="initial" i]{float:none!important;font-size:1em!important;line-height:inherit!important;margin:0!important}
+*{max-width:100%;box-sizing:border-box;background-image:none!important}
+</style>`;
+
+const FROST_HOSTILE_CSS_PROPERTIES = new Set([
+  "background",
+  "background-color",
+  "background-image",
+  "color",
+  "font-family",
+  "font-size",
+  "height",
+  "letter-spacing",
+  "line-height",
+  "max-height",
+  "max-width",
+  "min-height",
+  "min-width",
+  "position",
+  "text-shadow",
+  "width",
+  "word-spacing",
+]);
+
+function sanitizeFrostStyleAttribute(styleText) {
+  return String(styleText || "")
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .filter((declaration) => {
+      const colon = declaration.indexOf(":");
+      if (colon < 0) return false;
+      const property = declaration.slice(0, colon).trim().toLowerCase();
+      return !FROST_HOSTILE_CSS_PROPERTIES.has(property) && property !== "float" && property !== "columns";
+    })
+    .join(";");
+}
+
+function normalizeFrostText(text) {
+  return String(text || "")
+    .replace(/\uFB00/g, "ff")
+    .replace(/\uFB01/g, "fi")
+    .replace(/\uFB02/g, "fl")
+    .replace(/\uFB03/g, "ffi")
+    .replace(/\uFB04/g, "ffl");
+}
+
+function cleanFrostXhtml(content) {
+  try {
+    const whitespaceGuard = protectWhitespaceOnlyTextNodes(content);
+    const doc = new DOMParser().parseFromString(whitespaceGuard.content, "application/xhtml+xml");
+    if (doc.querySelector("parsererror")) throw new Error("XHTML parse failed");
+
+    for (const element of doc.querySelectorAll("[style]")) {
+      const cleaned = sanitizeFrostStyleAttribute(element.getAttribute("style"));
+      if (cleaned) element.setAttribute("style", cleaned);
+      else element.removeAttribute("style");
+    }
+    for (const element of doc.querySelectorAll("body,[bgcolor],[background],[color],font")) {
+      element.removeAttribute("bgcolor");
+      element.removeAttribute("background");
+      element.removeAttribute("color");
+      if (element.localName === "font") {
+        element.removeAttribute("face");
+        element.removeAttribute("size");
+      }
+    }
+    const walker = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parentName = node.parentElement?.localName?.toLowerCase();
+      if (parentName === "code" || parentName === "pre" || parentName === "style" || parentName === "script") continue;
+      node.nodeValue = normalizeFrostText(node.nodeValue);
+    }
+    return whitespaceGuard.restore(safeSerialize(doc, whitespaceGuard.content));
+  } catch (error) {
+    console.warn("Frost Clean XHTML fallback:", error.message);
+    return normalizeFrostText(content);
+  }
+}
+
+function cleanFrostCss(content) {
+  let cleaned = String(content || "");
+  cleaned = cleaned.replace(/@font-face\s*\{[\s\S]*?\}/gi, "");
+  cleaned = cleaned.replace(/([\w-]+)\s*:\s*([^;{}]+)(;?)/g, (match, property) => {
+    const key = property.toLowerCase();
+    if (FROST_HOSTILE_CSS_PROPERTIES.has(key) || key === "float" || key.startsWith("column-")) return "";
+    return match;
+  });
+  return cleaned;
+}
+
 // Convert EPUB file - returns converted blob
 async function convertEpubFile(file, progressCallback) {
   const startTime = Date.now();
   const originalSize = file.size;
+  const frostCleanEnabled = !!document.getElementById("frostCleanToggle")?.checked;
 
   // Initialize logging
   clearLog();
@@ -4059,6 +4284,7 @@ async function convertEpubFile(file, progressCallback) {
   for (const [xhtmlPath, content] of Object.entries(xhtmlFiles)) {
     if (operationCancelled) throw new Error("Cancelled by user");
     let t = scrubEpubTextResource(xhtmlPath, content);
+    if (frostCleanEnabled) t = cleanFrostXhtml(t);
     const r = fixSvgCover(t);
     if (r.fixed) {
       t = r.c;
@@ -4223,7 +4449,7 @@ async function convertEpubFile(file, progressCallback) {
 
     // Inject universal image constraint — prevents overflow on e-ink displays
     if (t.includes("</head>")) {
-      t = t.replace("</head>", DEFENSIVE_STYLE + "</head>");
+      t = t.replace("</head>", DEFENSIVE_STYLE + (frostCleanEnabled ? FROST_CLEAN_STYLE : "") + "</head>");
     }
 
     processedXhtmlFiles[xhtmlPath] = t;
@@ -4316,6 +4542,7 @@ async function convertEpubFile(file, progressCallback) {
     let data = await fileObj.async("arraybuffer");
     if (low.endsWith(".css")) {
       let t = scrubEpubTextResource(path, await safeReadText(fileObj));
+      if (frostCleanEnabled) t = cleanFrostCss(t);
       for (const [o, n] of Object.entries(renamed)) {
         t = t.split(o.split("/").pop()).join(n.split("/").pop());
       }
@@ -5092,5 +5319,980 @@ function confirmMove() {
   };
 
   xhr.send(formData);
+}
+
+// ============================================================================
+// Frost Manga Lab — browser-side EPUB/CBZ/image conversion to guided-panel EPUB.
+// ============================================================================
+const MANGA_WIDTH = 480;
+const MANGA_HEIGHT = 800;
+const MANGA_ASSET_MAX_EDGE = 800;
+const MANGA_IMAGE_PATTERN = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const MANGA_PRESETS = Object.freeze({
+  manga: { gamma: 92, contrast: 24, sharpness: 55, dither: "threshold" },
+  screentone: { gamma: 100, contrast: 14, sharpness: 34, dither: "ordered" },
+  graphic: { gamma: 94, contrast: 18, sharpness: 38, dither: "ordered" },
+  colour: { gamma: 106, contrast: 10, sharpness: 24, dither: "diffusion" },
+});
+const mangaNaturalCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+let mangaPages = [];
+let mangaSelectedIndex = 0;
+let mangaBusy = false;
+let mangaPreviewTimer = 0;
+let mangaPreviewGeneration = 0;
+let mangaPreviewSegmentIndex = 0;
+let mangaPreviewSegmentCount = 1;
+let mangaSourceKind = "images";
+
+function openMangaOptimizer() {
+  document.getElementById("mangaOptimizerModal").classList.add("open");
+  if (mangaPages.length) refreshMangaPreview();
+}
+
+function releaseMangaPages() {
+  for (const page of mangaPages) {
+    if (page.url) URL.revokeObjectURL(page.url);
+  }
+  mangaPages = [];
+}
+
+function closeMangaOptimizer() {
+  if (mangaBusy) return;
+  document.getElementById("mangaOptimizerModal").classList.remove("open");
+}
+
+function cleanMangaTitle(filename) {
+  return String(filename || "Frost Manga")
+    .replace(/\.(epub|cbz|zip)$/i, "")
+    .replace(/[_]+/g, " ")
+    .trim()
+    .slice(0, 120) || "Frost Manga";
+}
+
+function isUsableMangaPath(path) {
+  const normalized = String(path || "").replace(/\\/g, "/");
+  const leaf = normalized.split("/").pop() || "";
+  return MANGA_IMAGE_PATTERN.test(leaf) && !normalized.includes("/__MACOSX/") && !leaf.startsWith("._") && !leaf.startsWith(".");
+}
+
+async function createMangaPage(name, data) {
+  const dims = await getImageDimensions(data, name);
+  if (!dims.width || !dims.height) throw new Error(`Could not decode ${name}`);
+  const blob = new Blob([data], { type: imageMimeType(name) });
+  return { name, data, width: dims.width, height: dims.height, url: URL.createObjectURL(blob) };
+}
+
+function normalizedArchivePath(path) {
+  let decoded = String(path || "");
+  try {
+    decoded = decodeHref(decoded);
+  } catch (error) {
+    /* Keep the undecoded path when an EPUB contains malformed percent escapes. */
+  }
+  return decoded.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").toLowerCase();
+}
+
+function buildArchivePathIndex(zip) {
+  const index = new Map();
+  for (const path of Object.keys(zip.files)) index.set(normalizedArchivePath(path), path);
+  return index;
+}
+
+function findArchiveEntryPath(index, path) {
+  return index.get(normalizedArchivePath(path)) || "";
+}
+
+function parseComicEpubMetadata(opfContent) {
+  try {
+    const doc = new DOMParser().parseFromString(opfContent, "application/xml");
+    if (doc.querySelector("parsererror")) return { title: "", author: "" };
+    const title = getElementsByLocalName(doc, "title")[0]?.textContent?.trim() || "";
+    const creators = getElementsByLocalName(doc, "creator");
+    const author = creators.find((creator) => {
+      const role =
+        creator.getAttribute("role") ||
+        creator.getAttribute("opf:role") ||
+        creator.getAttributeNS("http://www.idpf.org/2007/opf", "role") ||
+        "";
+      return role.toLowerCase() === "aut";
+    }) || creators[0];
+    return { title, author: author?.textContent?.trim() || "" };
+  } catch (error) {
+    return { title: "", author: "" };
+  }
+}
+
+function comicImageReferences(xhtmlContent) {
+  const references = [];
+  const addReference = (value) => {
+    const clean = String(value || "").trim().split("#")[0];
+    if (clean && !/^(data|https?):/i.test(clean)) references.push(clean);
+  };
+  try {
+    let doc = new DOMParser().parseFromString(xhtmlContent, "application/xhtml+xml");
+    if (doc.querySelector("parsererror")) doc = new DOMParser().parseFromString(xhtmlContent, "text/html");
+    for (const element of [
+      ...getElementsByLocalName(doc, "img"),
+      ...getElementsByLocalName(doc, "image"),
+      ...getElementsByLocalName(doc, "object"),
+    ]) {
+      addReference(
+        element.getAttribute("src") ||
+          element.getAttribute("href") ||
+          element.getAttribute("xlink:href") ||
+          element.getAttributeNS("http://www.w3.org/1999/xlink", "href") ||
+          element.getAttribute("data"),
+      );
+    }
+  } catch (error) {
+    /* Regex fallback below still handles ordinary fixed-layout pages. */
+  }
+  for (const match of xhtmlContent.matchAll(/(?:src|href|xlink:href|data)\s*=\s*["']([^"']+)["']/gi)) {
+    addReference(match[1]);
+  }
+  for (const match of xhtmlContent.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) addReference(match[1]);
+  return references;
+}
+
+async function extractComicEpub(zip) {
+  const opfPath = await findOPFPath(zip);
+  if (!opfPath || !zip.files[opfPath]) throw new Error("This EPUB does not contain a readable package document.");
+  const opfContent = await safeReadText(zip.files[opfPath]);
+  const metadata = parseComicEpubMetadata(opfContent);
+  const spinePaths = parseOpfSpineHrefs(opfContent, opfPath);
+  const pathIndex = buildArchivePathIndex(zip);
+  const orderedPaths = [];
+  const seen = new Set();
+  const addPagePath = (path) => {
+    const actualPath = findArchiveEntryPath(pathIndex, path);
+    if (!actualPath || !isUsableMangaPath(actualPath) || seen.has(actualPath)) return;
+    seen.add(actualPath);
+    orderedPaths.push(actualPath);
+  };
+
+  for (const spinePath of spinePaths) {
+    const actualSpinePath = findArchiveEntryPath(pathIndex, spinePath);
+    if (!actualSpinePath) continue;
+    if (isUsableMangaPath(actualSpinePath)) {
+      addPagePath(actualSpinePath);
+      continue;
+    }
+    const entry = zip.files[actualSpinePath];
+    if (!entry || entry.dir) continue;
+    const content = await safeReadText(entry);
+    for (const reference of comicImageReferences(content)) addPagePath(resolvePath(actualSpinePath, reference));
+  }
+
+  // A few image-only EPUBs have a broken or empty spine. Natural image order is
+  // safer than rejecting the entire book, but is only used when spine extraction
+  // found nothing so cover and decorative assets do not leak into normal books.
+  if (!orderedPaths.length) {
+    orderedPaths.push(
+      ...Object.keys(zip.files)
+        .filter((path) => !zip.files[path].dir && isUsableMangaPath(path))
+        .sort((a, b) => mangaNaturalCollator.compare(a, b)),
+    );
+  }
+  if (!orderedPaths.length) throw new Error("No comic page images were found in this EPUB.");
+  return { orderedPaths, metadata };
+}
+
+async function loadMangaArchive(file) {
+  if (!file) return;
+  if (typeof JSZip === "undefined") return alert("JSZip is not available in this portal build.");
+  setMangaBusy(true, "Opening archive…", 2);
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const isEpub = file.name.toLowerCase().endsWith(".epub");
+    let metadata = { title: "", author: "" };
+    let entries;
+    if (isEpub) {
+      updateMangaProgress("Following EPUB reading order…", 5);
+      const extracted = await extractComicEpub(zip);
+      metadata = extracted.metadata;
+      entries = extracted.orderedPaths.map((path) => [path, zip.files[path]]);
+    } else {
+      entries = Object.entries(zip.files)
+        .filter(([path, entry]) => !entry.dir && isUsableMangaPath(path))
+        .sort(([a], [b]) => mangaNaturalCollator.compare(a, b));
+    }
+    if (!entries.length) throw new Error("No supported images were found in this archive.");
+    releaseMangaPages();
+    const loaded = [];
+    for (let index = 0; index < entries.length; index++) {
+      const [path, entry] = entries[index];
+      updateMangaProgress(`Reading ${path.split("/").pop()}…`, ((index + 1) / entries.length) * 90);
+      loaded.push(await createMangaPage(path, await entry.async("arraybuffer")));
+      await yieldToBrowser();
+    }
+    mangaPages = loaded;
+    mangaSourceKind = isEpub ? "comic EPUB" : "archive";
+    document.getElementById("mangaTitle").value = (metadata.title || cleanMangaTitle(file.name)).slice(0, 120);
+    document.getElementById("mangaAuthor").value = (metadata.author || "").slice(0, 60);
+    initializeMangaWorkspace();
+  } catch (error) {
+    alert(`Could not open comic: ${error.message}`);
+  } finally {
+    setMangaBusy(false);
+  }
+}
+
+async function loadMangaImageFiles(fileList) {
+  const files = Array.from(fileList || [])
+    .filter((file) => isUsableMangaPath(file.webkitRelativePath || file.name))
+    .sort((a, b) => mangaNaturalCollator.compare(a.webkitRelativePath || a.name, b.webkitRelativePath || b.name));
+  if (!files.length) return;
+  setMangaBusy(true, "Reading image folder…", 2);
+  try {
+    releaseMangaPages();
+    const loaded = [];
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      updateMangaProgress(`Reading ${file.name}…`, ((index + 1) / files.length) * 90);
+      loaded.push(await createMangaPage(file.webkitRelativePath || file.name, await file.arrayBuffer()));
+      await yieldToBrowser();
+    }
+    mangaPages = loaded;
+    mangaSourceKind = "image folder";
+    const folderName = files[0].webkitRelativePath?.split("/")[0] || "Frost Manga";
+    document.getElementById("mangaTitle").value = cleanMangaTitle(folderName);
+    document.getElementById("mangaAuthor").value = "";
+    initializeMangaWorkspace();
+  } catch (error) {
+    alert(`Could not read image folder: ${error.message}`);
+  } finally {
+    setMangaBusy(false);
+  }
+}
+
+function initializeMangaWorkspace() {
+  mangaSelectedIndex = 0;
+  mangaPreviewSegmentIndex = 0;
+  mangaPreviewSegmentCount = 1;
+  document.getElementById("mangaWorkspace").hidden = false;
+  document.getElementById("mangaSourceSummary").textContent = `${mangaPages.length} ${mangaSourceKind} page${mangaPages.length === 1 ? "" : "s"}`;
+  renderMangaPageStrip();
+  applyMangaPreset(document.getElementById("mangaPreset").value || "manga");
+  updateMangaProgress(`Loaded ${mangaPages.length} source page${mangaPages.length === 1 ? "" : "s"}`, 100);
+}
+
+function renderMangaPageStrip() {
+  const strip = document.getElementById("mangaPageStrip");
+  strip.innerHTML = "";
+  mangaPages.forEach((page, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `manga-page-thumb${index === mangaSelectedIndex ? " active" : ""}`;
+    const spread = page.width / page.height >= 1.25;
+    button.innerHTML = `<img src="${page.url}" alt=""><span>${escapeHtml(page.name.split("/").pop())}</span>${spread ? "<em>SPREAD</em>" : ""}`;
+    button.onclick = () => {
+      mangaSelectedIndex = index;
+      mangaPreviewSegmentIndex = 0;
+      renderMangaPageStrip();
+      refreshMangaPreview();
+    };
+    strip.appendChild(button);
+  });
+}
+
+function applyMangaPreset(name) {
+  const preset = MANGA_PRESETS[name] || MANGA_PRESETS.manga;
+  document.getElementById("mangaPreset").value = name in MANGA_PRESETS ? name : "manga";
+  document.getElementById("mangaGamma").value = preset.gamma;
+  document.getElementById("mangaContrast").value = preset.contrast;
+  document.getElementById("mangaSharpness").value = preset.sharpness;
+  document.getElementById("mangaDither").value = preset.dither;
+  updateMangaToneControls();
+}
+
+function updateMangaToneControls() {
+  const gamma = parseInt(document.getElementById("mangaGamma").value, 10);
+  const contrast = parseInt(document.getElementById("mangaContrast").value, 10);
+  const sharpness = parseInt(document.getElementById("mangaSharpness").value, 10);
+  const overlap = parseInt(document.getElementById("mangaOverlap").value, 10);
+  document.getElementById("mangaGammaValue").textContent = (gamma / 100).toFixed(2);
+  document.getElementById("mangaContrastValue").textContent = `${contrast}%`;
+  document.getElementById("mangaSharpnessValue").textContent = `${sharpness}%`;
+  document.getElementById("mangaOverlapValue").textContent = `${overlap}%`;
+  refreshMangaPreview();
+}
+
+function currentMangaOptions() {
+  return {
+    rtl: document.getElementById("mangaDirection").value === "rtl",
+    preset: document.getElementById("mangaPreset").value,
+    dither: document.getElementById("mangaDither").value,
+    guidedPanels: document.getElementById("mangaGuidedPanels").checked,
+    keepOverview: document.getElementById("mangaKeepOverview").checked,
+    autoSpread: document.getElementById("mangaAutoSpread").checked,
+    autoCrop: document.getElementById("mangaAutoCrop").checked,
+    upscale: document.getElementById("mangaUpscale").checked,
+    gamma: parseInt(document.getElementById("mangaGamma").value, 10) / 100,
+    contrast: parseInt(document.getElementById("mangaContrast").value, 10) / 100,
+    sharpness: parseInt(document.getElementById("mangaSharpness").value, 10) / 100,
+    overlap: parseInt(document.getElementById("mangaOverlap").value, 10) / 100,
+  };
+}
+
+function refreshMangaPreview() {
+  clearTimeout(mangaPreviewTimer);
+  const generation = ++mangaPreviewGeneration;
+  mangaPreviewTimer = setTimeout(() => renderMangaPreview(generation), 140);
+}
+
+function resetMangaPanelPreview() {
+  mangaPreviewSegmentIndex = 0;
+  refreshMangaPreview();
+}
+
+function stepMangaPreviewPanel(delta) {
+  if (mangaPreviewSegmentCount < 2) return;
+  mangaPreviewSegmentIndex =
+    (mangaPreviewSegmentIndex + delta + mangaPreviewSegmentCount) % mangaPreviewSegmentCount;
+  refreshMangaPreview();
+}
+
+function loadMangaImage(page) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Could not decode ${page.name}`));
+    image.src = page.url;
+  });
+}
+
+async function detectMangaCrop(image) {
+  const maxSample = 520;
+  const scale = Math.min(1, maxSample / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  const grayAt = (x, y) => {
+    const i = (y * width + x) * 4;
+    return pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+  };
+  const cornerValues = [grayAt(0, 0), grayAt(width - 1, 0), grayAt(0, height - 1), grayAt(width - 1, height - 1)];
+  const background = cornerValues.reduce((sum, value) => sum + value, 0) / cornerValues.length;
+  // Only trim a consistent, near-white paper border. Artwork touching a corner,
+  // dark page backgrounds, and full-bleed pages are intentionally left intact.
+  if (background < 226 || Math.max(...cornerValues) - Math.min(...cornerValues) > 24) {
+    return { x: 0, y: 0, width: image.width, height: image.height };
+  }
+  const differs = (x, y) => Math.abs(grayAt(x, y) - background) > 18;
+  const rowThreshold = Math.max(2, Math.floor(width * 0.004));
+  const colThreshold = Math.max(2, Math.floor(height * 0.004));
+  let top = 0, bottom = height - 1, left = 0, right = width - 1;
+  while (top < height - 1) {
+    let count = 0;
+    for (let x = 0; x < width && count < rowThreshold; x++) if (differs(x, top)) count++;
+    if (count >= rowThreshold) break;
+    top++;
+  }
+  while (bottom > top) {
+    let count = 0;
+    for (let x = 0; x < width && count < rowThreshold; x++) if (differs(x, bottom)) count++;
+    if (count >= rowThreshold) break;
+    bottom--;
+  }
+  while (left < width - 1) {
+    let count = 0;
+    for (let y = top; y <= bottom && count < colThreshold; y++) if (differs(left, y)) count++;
+    if (count >= colThreshold) break;
+    left++;
+  }
+  while (right > left) {
+    let count = 0;
+    for (let y = top; y <= bottom && count < colThreshold; y++) if (differs(right, y)) count++;
+    if (count >= colThreshold) break;
+    right--;
+  }
+  const pad = Math.max(3, Math.round(Math.min(width, height) * 0.014));
+  left = Math.max(0, left - pad); top = Math.max(0, top - pad);
+  right = Math.min(width - 1, right + pad); bottom = Math.min(height - 1, bottom + pad);
+  const removedX = 1 - (right - left + 1) / width;
+  const removedY = 1 - (bottom - top + 1) / height;
+  if (removedX > 0.2 || removedY > 0.2 || right - left < width * 0.72 || bottom - top < height * 0.72) {
+    return { x: 0, y: 0, width: image.width, height: image.height };
+  }
+  const sourceX = Math.max(0, Math.min(image.width - 1, Math.round(left / scale)));
+  const sourceY = Math.max(0, Math.min(image.height - 1, Math.round(top / scale)));
+  return {
+    x: sourceX,
+    y: sourceY,
+    width: Math.min(image.width - sourceX, Math.round((right - left + 1) / scale)),
+    height: Math.min(image.height - sourceY, Math.round((bottom - top + 1) / scale)),
+  };
+}
+
+function mangaSpreadSegmentsForCrop(crop, options) {
+  if (!options.autoSpread || crop.width / crop.height < 1.25) return [{ ...crop, kind: "page" }];
+  const half = crop.width / 2;
+  const overlap = half * options.overlap;
+  const left = { x: crop.x, y: crop.y, width: Math.ceil(half + overlap), height: crop.height, kind: "spread" };
+  const right = {
+    x: Math.max(crop.x, Math.floor(crop.x + half - overlap)),
+    y: crop.y,
+    width: Math.ceil(half + overlap),
+    height: crop.height,
+    kind: "spread",
+  };
+  return options.rtl ? [right, left] : [left, right];
+}
+
+function findMangaPanelGutter(mask, sampleWidth, region, axis) {
+  const horizontal = axis === "horizontal";
+  const axisStart = horizontal ? region.y : region.x;
+  const axisLength = horizontal ? region.height : region.width;
+  const crossStart = horizontal ? region.x : region.y;
+  const crossLength = horizontal ? region.width : region.height;
+  const edgeMargin = Math.max(5, Math.round(axisLength * 0.11));
+  const minimumChild = Math.max(24, Math.round(axisLength * 0.17));
+  const minimumBand = Math.max(2, Math.round(axisLength * 0.006));
+  const first = axisStart + edgeMargin;
+  const last = axisStart + axisLength - edgeMargin - 1;
+  let best = null;
+  let runStart = -1;
+  let runInk = 0;
+
+  const inkFractionAt = (position) => {
+    if (position < axisStart || position >= axisStart + axisLength) return 0;
+    let ink = 0;
+    for (let cross = crossStart; cross < crossStart + crossLength; cross++) {
+      const x = horizontal ? cross : position;
+      const y = horizontal ? position : cross;
+      if (mask[y * sampleWidth + x]) ink++;
+    }
+    return ink / crossLength;
+  };
+
+  const finishRun = (runEnd) => {
+    if (runStart < 0) return;
+    const thickness = runEnd - runStart + 1;
+    const before = runStart - axisStart;
+    const after = axisStart + axisLength - runEnd - 1;
+    const boundarySupport = Math.min(inkFractionAt(runStart - 1), inkFractionAt(runEnd + 1));
+    if (thickness >= minimumBand && before >= minimumChild && after >= minimumChild && boundarySupport >= 0.035) {
+      const blankness = 1 - runInk / (thickness * crossLength);
+      const score = (thickness / axisLength) * blankness;
+      if (!best || score > best.score) best = { start: runStart, end: runEnd, score };
+    }
+    runStart = -1;
+    runInk = 0;
+  };
+
+  for (let position = first; position <= last; position++) {
+    let ink = 0;
+    for (let cross = crossStart; cross < crossStart + crossLength; cross++) {
+      const x = horizontal ? cross : position;
+      const y = horizontal ? position : cross;
+      if (mask[y * sampleWidth + x]) ink++;
+    }
+    // A gutter may cross one-pixel panel borders, but not artwork or lettering.
+    if (ink / crossLength <= 0.012) {
+      if (runStart < 0) runStart = position;
+      runInk += ink;
+    } else {
+      finishRun(position - 1);
+    }
+  }
+  finishRun(last);
+  return best;
+}
+
+async function detectMangaPanels(image, crop, options) {
+  if (!options.guidedPanels) return [];
+  const maxSample = 640;
+  const scale = Math.min(1, maxSample / Math.max(crop.width, crop.height));
+  const width = Math.max(1, Math.round(crop.width * scale));
+  const height = Math.max(1, Math.round(crop.height * scale));
+  if (width < 90 || height < 120) return [];
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  const mask = new Uint8Array(width * height);
+  for (let pixel = 0; pixel < mask.length; pixel++) {
+    const offset = pixel * 4;
+    const gray = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
+    mask[pixel] = gray < 238 ? 1 : 0;
+  }
+
+  const splitRegion = (region, depth) => {
+    if (depth >= 5 || region.width < width * 0.22 || region.height < height * 0.14) return [region];
+    const horizontal = findMangaPanelGutter(mask, width, region, "horizontal");
+    const vertical = findMangaPanelGutter(mask, width, region, "vertical");
+    // Prefer a row split when both gutters are similarly convincing. It gives
+    // natural top-to-bottom, then RTL/LTR ordering for regular comic grids.
+    const useHorizontal = horizontal && (!vertical || horizontal.score >= vertical.score * 0.82);
+    const gutter = useHorizontal ? horizontal : vertical;
+    if (!gutter) return [region];
+
+    let first;
+    let second;
+    if (useHorizontal) {
+      first = { x: region.x, y: region.y, width: region.width, height: gutter.start - region.y };
+      second = {
+        x: region.x,
+        y: gutter.end + 1,
+        width: region.width,
+        height: region.y + region.height - gutter.end - 1,
+      };
+      return [...splitRegion(first, depth + 1), ...splitRegion(second, depth + 1)];
+    }
+    const left = { x: region.x, y: region.y, width: gutter.start - region.x, height: region.height };
+    const right = {
+      x: gutter.end + 1,
+      y: region.y,
+      width: region.x + region.width - gutter.end - 1,
+      height: region.height,
+    };
+    first = options.rtl ? right : left;
+    second = options.rtl ? left : right;
+    return [...splitRegion(first, depth + 1), ...splitRegion(second, depth + 1)];
+  };
+
+  const regions = splitRegion({ x: 0, y: 0, width, height }, 0);
+  if (regions.length < 2 || regions.length > 16) return [];
+  const coveredArea = regions.reduce((sum, region) => sum + region.width * region.height, 0);
+  if (coveredArea < width * height * 0.58) return [];
+
+  const scaleX = crop.width / width;
+  const scaleY = crop.height / height;
+  // Preserve panel borders, edge lettering, and speech balloons that slightly
+  // cross a gutter. A little overlap is preferable to losing context.
+  const padding = Math.max(4, Math.round(Math.min(crop.width, crop.height) * 0.018));
+  return regions.map((region, index) => {
+    const left = Math.max(crop.x, Math.floor(crop.x + region.x * scaleX) - padding);
+    const top = Math.max(crop.y, Math.floor(crop.y + region.y * scaleY) - padding);
+    const right = Math.min(crop.x + crop.width, Math.ceil(crop.x + (region.x + region.width) * scaleX) + padding);
+    const bottom = Math.min(crop.y + crop.height, Math.ceil(crop.y + (region.y + region.height) * scaleY) + padding);
+    return { x: left, y: top, width: right - left, height: bottom - top, kind: "panel", panelNumber: index + 1 };
+  });
+}
+
+function applyMangaTone(imageData, options) {
+  const data = imageData.data;
+  const histogram = new Uint32Array(256);
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3] / 255;
+    const r = data[i] * alpha + 255 * (1 - alpha);
+    const g = data[i + 1] * alpha + 255 * (1 - alpha);
+    const b = data[i + 2] * alpha + 255 * (1 - alpha);
+    const gray = Math.round(r * 0.299 + g * 0.587 + b * 0.114);
+    data[i] = data[i + 1] = data[i + 2] = gray;
+    data[i + 3] = 255;
+    histogram[gray]++;
+  }
+  const total = imageData.width * imageData.height;
+  let black = percentileFromHistogram(histogram, total, 0.006);
+  let white = percentileFromHistogram(histogram, total, 0.994);
+  if (white - black < 52) { black = 0; white = 255; }
+  const range = Math.max(1, white - black);
+  const contrast = 1 + options.contrast;
+  for (let i = 0; i < data.length; i += 4) {
+    let value = Math.max(0, Math.min(1, (data[i] - black) / range));
+    value = Math.max(0, Math.min(1, (value - 0.5) * contrast + 0.5));
+    value = Math.pow(value, 1 / options.gamma);
+    data[i] = data[i + 1] = data[i + 2] = Math.round(value * 255);
+  }
+  sharpenGrayscaleImageData(data, imageData.width, imageData.height, options.sharpness);
+}
+
+function quantizeMangaImage(imageData, dither) {
+  const { data, width, height } = imageData;
+  const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  let diffusion = null;
+  if (dither === "diffusion") {
+    diffusion = new Float32Array(width * height);
+    for (let i = 0; i < diffusion.length; i++) diffusion[i] = data[i * 4];
+  }
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const pixel = y * width + x;
+      let gray = diffusion ? diffusion[pixel] : data[pixel * 4];
+      if (dither === "ordered") gray += (bayer[(y & 3) * 4 + (x & 3)] / 15 - 0.5) * 58;
+      gray = Math.max(0, Math.min(255, gray));
+      const level = Math.max(0, Math.min(3, Math.round(gray / 85)));
+      const outputGray = level * 85;
+      data[pixel * 4] = data[pixel * 4 + 1] = data[pixel * 4 + 2] = outputGray;
+      if (diffusion) {
+        const error = gray - outputGray;
+        if (x + 1 < width) diffusion[pixel + 1] += error * 7 / 16;
+        if (y + 1 < height) {
+          if (x > 0) diffusion[pixel + width - 1] += error * 3 / 16;
+          diffusion[pixel + width] += error * 5 / 16;
+          if (x + 1 < width) diffusion[pixel + width + 1] += error / 16;
+        }
+      }
+    }
+  }
+}
+
+function mangaInkBounds(imageData) {
+  const { data, width, height } = imageData;
+  let left = width;
+  let top = height;
+  let right = -1;
+  let bottom = -1;
+  let inkPixels = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const offset = (y * width + x) * 4;
+      const gray = data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+      if (data[offset + 3] < 24 || gray >= 242) continue;
+      inkPixels++;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (inkPixels < Math.max(32, width * height * 0.0008)) return null;
+  return { left, top, right, bottom };
+}
+
+function renderMangaSegment(image, segment, options) {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const sourceX = Math.max(0, Math.min(sourceWidth - 1, Math.floor(segment.x)));
+  const sourceY = Math.max(0, Math.min(sourceHeight - 1, Math.floor(segment.y)));
+  const sourceCropWidth = Math.max(1, Math.min(sourceWidth - sourceX, Math.ceil(segment.width)));
+  const sourceCropHeight = Math.max(1, Math.min(sourceHeight - sourceY, Math.ceil(segment.height)));
+  let scale = Math.min(MANGA_ASSET_MAX_EDGE / sourceCropWidth, MANGA_ASSET_MAX_EDGE / sourceCropHeight);
+  if (!options.upscale) scale = Math.min(1, scale);
+  let canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(sourceCropWidth * scale));
+  canvas.height = Math.max(1, Math.round(sourceCropHeight * scale));
+  let ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(image, sourceX, sourceY, sourceCropWidth, sourceCropHeight, 0, 0, canvas.width, canvas.height);
+  let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  if (segment.kind === "panel" || options.autoCrop) {
+    const bounds = mangaInkBounds(imageData);
+    if (bounds) {
+      const padding = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.012));
+      const left = Math.max(0, bounds.left - padding);
+      const top = Math.max(0, bounds.top - padding);
+      const right = Math.min(canvas.width - 1, bounds.right + padding);
+      const bottom = Math.min(canvas.height - 1, bounds.bottom + padding);
+      const trimmedWidth = right - left + 1;
+      const trimmedHeight = bottom - top + 1;
+      if (trimmedWidth < canvas.width || trimmedHeight < canvas.height) {
+        const trimmed = document.createElement("canvas");
+        trimmed.width = trimmedWidth;
+        trimmed.height = trimmedHeight;
+        const trimmedContext = trimmed.getContext("2d", { willReadFrequently: true });
+        trimmedContext.fillStyle = "#fff";
+        trimmedContext.fillRect(0, 0, trimmed.width, trimmed.height);
+        trimmedContext.drawImage(canvas, left, top, trimmedWidth, trimmedHeight, 0, 0, trimmedWidth, trimmedHeight);
+        canvas = trimmed;
+        ctx = trimmedContext;
+        imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      }
+    }
+  }
+  applyMangaTone(imageData, options);
+  quantizeMangaImage(imageData, options.dither);
+  ctx.putImageData(imageData, 0, 0);
+  return { canvas };
+}
+
+async function renderMangaSourcePage(page, options) {
+  const image = await loadMangaImage(page);
+  const crop = options.autoCrop ? await detectMangaCrop(image) : { x: 0, y: 0, width: image.width, height: image.height };
+  const panels = await detectMangaPanels(image, crop, options);
+  let segments;
+  if (panels.length > 1) {
+    segments = options.keepOverview ? [{ ...crop, kind: "overview" }, ...panels] : panels;
+  } else {
+    segments = mangaSpreadSegmentsForCrop(crop, options);
+  }
+  return { image, crop, segments, panelCount: panels.length };
+}
+
+async function renderMangaPreview(generation) {
+  if (!mangaPages.length || mangaBusy) return;
+  try {
+    const page = mangaPages[Math.min(mangaSelectedIndex, mangaPages.length - 1)];
+    const options = currentMangaOptions();
+    const source = await renderMangaSourcePage(page, options);
+    if (generation !== mangaPreviewGeneration) return;
+    mangaPreviewSegmentCount = source.segments.length;
+    mangaPreviewSegmentIndex = Math.max(0, Math.min(mangaPreviewSegmentIndex, mangaPreviewSegmentCount - 1));
+    const segment = source.segments[mangaPreviewSegmentIndex];
+    const rendered = renderMangaSegment(source.image, segment, options);
+    if (generation !== mangaPreviewGeneration) return;
+    const target = document.getElementById("mangaPreviewCanvas");
+    const landscape = document.getElementById("mangaPreviewOrientation")?.value === "landscape";
+    target.width = landscape ? MANGA_HEIGHT : MANGA_WIDTH;
+    target.height = landscape ? MANGA_WIDTH : MANGA_HEIGHT;
+    target.closest(".x4-preview-shell")?.classList.toggle("landscape", landscape);
+    const targetContext = target.getContext("2d");
+    targetContext.fillStyle = "#fff";
+    targetContext.fillRect(0, 0, target.width, target.height);
+    const previewScale = Math.min(target.width / rendered.canvas.width, target.height / rendered.canvas.height);
+    const previewWidth = Math.max(1, Math.round(rendered.canvas.width * previewScale));
+    const previewHeight = Math.max(1, Math.round(rendered.canvas.height * previewScale));
+    targetContext.imageSmoothingEnabled = true;
+    targetContext.imageSmoothingQuality = "high";
+    targetContext.drawImage(
+      rendered.canvas,
+      Math.floor((target.width - previewWidth) / 2),
+      Math.floor((target.height - previewHeight) / 2),
+      previewWidth,
+      previewHeight,
+    );
+    let segmentLabel = "whole page";
+    if (segment.kind === "overview") segmentLabel = "page overview";
+    else if (segment.kind === "panel") segmentLabel = `panel ${segment.panelNumber} of ${source.panelCount}`;
+    else if (segment.kind === "spread") segmentLabel = `spread part ${mangaPreviewSegmentIndex + 1} of ${source.segments.length}`;
+    document.getElementById("mangaPreviewCaption").textContent = `${page.name.split("/").pop()} · ${segmentLabel}`;
+    document.getElementById("mangaPreviewNote").textContent =
+      source.panelCount > 1
+        ? `${source.panelCount} safe panels detected · exported as tight EPUB pages.`
+        : options.guidedPanels
+          ? "No safe panel gutters detected; this page stays intact."
+          : "Preview uses the same four shades written into the EPUB.";
+    const stepper = document.getElementById("mangaPanelStepper");
+    stepper.hidden = mangaPreviewSegmentCount < 2;
+    document.getElementById("mangaPanelCounter").textContent = `${mangaPreviewSegmentIndex + 1} of ${mangaPreviewSegmentCount}`;
+  } catch (error) {
+    console.error("Manga preview failed:", error);
+    document.getElementById("mangaPanelStepper").hidden = true;
+    document.getElementById("mangaPreviewNote").textContent = `Preview failed: ${error.message}`;
+  }
+}
+
+function mangaCanvasToPng(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not encode a panel image.")), "image/png");
+  });
+}
+
+function mangaBookIdentifier() {
+  if (crypto.randomUUID) return `urn:uuid:${crypto.randomUUID()}`;
+  const words = new Uint32Array(4);
+  crypto.getRandomValues(words);
+  return `urn:frostink:${Array.from(words, (word) => word.toString(16).padStart(8, "0")).join("")}`;
+}
+
+async function createMangaEpubBlob(pages, chapters, title, author, rtl) {
+  if (!pages.length) throw new Error("No guided panel pages were produced.");
+  const zip = new JSZip();
+  const identifier = mangaBookIdentifier();
+  const modified = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const escapedTitle = xmlEscape(title);
+  const escapedAuthor = xmlEscape(author || "Unknown");
+  const pad = (index) => String(index + 1).padStart(5, "0");
+  const panelsPerSection = 8;
+  const zipTextOptions = { compression: "DEFLATE", compressionOptions: { level: 8 }, createFolders: false };
+
+  zip.file("mimetype", "application/epub+zip", { compression: "STORE", createFolders: false });
+  zip.file(
+    "META-INF/container.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>`,
+    zipTextOptions,
+  );
+  zip.file(
+    "OEBPS/styles.css",
+    `html, body { margin: 0; padding: 0; }
+body { text-align: center; }
+.panel-page { margin: 0; padding: 0; }
+img.panel { display: block; width: 100%; height: auto; margin: 0 auto; }`,
+    zipTextOptions,
+  );
+
+  const manifest = [
+    '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+    '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
+    '<item id="css" href="styles.css" media-type="text/css"/>',
+  ];
+  const spine = [];
+  for (let index = 0; index < pages.length; ++index) {
+    const number = pad(index);
+    const imageHref = `images/panel-${number}.png`;
+    const imageId = `image-${number}`;
+    manifest.push(
+      `<item id="${imageId}" href="${imageHref}" media-type="image/png"${index === 0 ? ' properties="cover-image"' : ""}/>`
+    );
+    const imageBytes = new Uint8Array(await pages[index].blob.arrayBuffer());
+    zip.file(`OEBPS/${imageHref}`, imageBytes, { compression: "STORE", createFolders: false });
+  }
+
+  const sectionCount = Math.ceil(pages.length / panelsPerSection);
+  for (let sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex) {
+    const sectionNumber = pad(sectionIndex);
+    const sectionHref = `pages/section-${sectionNumber}.xhtml`;
+    const sectionId = `section-${sectionNumber}`;
+    const firstPage = sectionIndex * panelsPerSection;
+    const lastPage = Math.min(pages.length, firstPage + panelsPerSection);
+    const panelMarkup = [];
+    for (let pageIndex = firstPage; pageIndex < lastPage; ++pageIndex) {
+      const number = pad(pageIndex);
+      const forceNewPage = pageIndex > firstPage ? ' style="page-break-before: always"' : "";
+      panelMarkup.push(
+        `<div id="panel-${number}" class="panel-page"${forceNewPage}><img class="panel" src="../images/panel-${number}.png" alt=""/></div>`
+      );
+    }
+    manifest.push(`<item id="${sectionId}" href="${sectionHref}" media-type="application/xhtml+xml"/>`);
+    spine.push(`<itemref idref="${sectionId}"/>`);
+    zip.file(
+      `OEBPS/${sectionHref}`,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head><title>${xmlEscape(pages[firstPage].label)}</title><link rel="stylesheet" type="text/css" href="../styles.css"/></head>
+<body>${panelMarkup.join("")}</body>
+</html>`,
+      zipTextOptions,
+    );
+  }
+
+  const navItems = chapters.map((chapter) => {
+    const sectionNumber = pad(Math.floor(chapter.pageIndex / panelsPerSection));
+    const panelNumber = pad(chapter.pageIndex);
+    return `<li><a href="pages/section-${sectionNumber}.xhtml#panel-${panelNumber}">${xmlEscape(chapter.label)}</a></li>`;
+  });
+  zip.file(
+    "OEBPS/nav.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<head><title>${escapedTitle}</title></head>
+<body><nav epub:type="toc" id="toc"><h1>${escapedTitle}</h1><ol>${navItems.join("")}</ol></nav></body>
+</html>`,
+    zipTextOptions,
+  );
+
+  const ncxItems = chapters.map((chapter, index) => {
+    const sectionNumber = pad(Math.floor(chapter.pageIndex / panelsPerSection));
+    const panelNumber = pad(chapter.pageIndex);
+    return `<navPoint id="nav-${index + 1}" playOrder="${index + 1}"><navLabel><text>${xmlEscape(chapter.label)}</text></navLabel><content src="pages/section-${sectionNumber}.xhtml#panel-${panelNumber}"/></navPoint>`;
+  });
+  zip.file(
+    "OEBPS/toc.ncx",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+<head><meta name="dtb:uid" content="${identifier}"/><meta name="dtb:depth" content="1"/></head>
+<docTitle><text>${escapedTitle}</text></docTitle><navMap>${ncxItems.join("")}</navMap>
+</ncx>`,
+    zipTextOptions,
+  );
+
+  zip.file(
+    "OEBPS/content.opf",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" prefix="rendition: http://www.idpf.org/vocab/rendition/#">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:identifier id="book-id">${identifier}</dc:identifier><dc:title>${escapedTitle}</dc:title>
+  <dc:creator>${escapedAuthor}</dc:creator><dc:language>en</dc:language>
+  <meta property="dcterms:modified">${modified}</meta>
+  <meta name="cover" content="image-00001"/><meta property="rendition:layout">reflowable</meta>
+</metadata>
+<manifest>${manifest.join("")}</manifest>
+<spine toc="ncx" page-progression-direction="${rtl ? "rtl" : "ltr"}">${spine.join("")}</spine>
+</package>`,
+    zipTextOptions,
+  );
+
+  return zip.generateAsync({ type: "blob", mimeType: "application/epub+zip", compression: "DEFLATE" });
+}
+
+function safeMangaEpubFilename(title) {
+  const clean = String(title || "Frost Manga").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
+  return `${clean || "Frost Manga"} - Guided.epub`;
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function updateMangaProgress(text, percent) {
+  document.getElementById("mangaProgress").hidden = false;
+  document.getElementById("mangaProgressText").textContent = text;
+  document.getElementById("mangaProgressPercent").textContent = `${Math.round(percent)}%`;
+  document.getElementById("mangaProgressFill").style.width = `${Math.max(0, Math.min(100, percent))}%`;
+}
+
+function setMangaBusy(busy, text = "Preparing…", percent = 0) {
+  mangaBusy = busy;
+  document.getElementById("mangaOptimizerClose").classList.toggle("disabled", busy);
+  document.getElementById("mangaDownloadBtn")?.toggleAttribute("disabled", busy);
+  document.getElementById("mangaUploadBtn")?.toggleAttribute("disabled", busy);
+  if (busy) updateMangaProgress(text, percent);
+  else if (!mangaPages.length) document.getElementById("mangaProgress").hidden = true;
+  else refreshMangaPreview();
+}
+
+async function buildMangaBook(action) {
+  if (mangaBusy || !mangaPages.length) return;
+  const options = currentMangaOptions();
+  const title = document.getElementById("mangaTitle").value.trim() || "Frost Manga";
+  const author = document.getElementById("mangaAuthor").value.trim();
+  const epubPages = [];
+  const chapters = [];
+  setMangaBusy(true, "Starting Frost Manga conversion…", 1);
+  try {
+    for (let sourceIndex = 0; sourceIndex < mangaPages.length; sourceIndex++) {
+      const sourcePage = mangaPages[sourceIndex];
+      const source = await renderMangaSourcePage(sourcePage, options);
+      chapters.push({ label: sourcePage.name.split("/").pop(), pageIndex: epubPages.length });
+      for (let part = 0; part < source.segments.length; part++) {
+        const progress = ((sourceIndex + part / source.segments.length) / mangaPages.length) * 82;
+        updateMangaProgress(`Optimizing ${sourcePage.name.split("/").pop()}${source.segments.length > 1 ? ` — part ${part + 1}` : ""}…`, progress);
+        const rendered = renderMangaSegment(source.image, source.segments[part], options);
+        epubPages.push({
+          blob: await mangaCanvasToPng(rendered.canvas),
+          label: `${sourcePage.name.split("/").pop()}${source.segments.length > 1 ? ` — panel ${part + 1}` : ""}`,
+        });
+        await yieldToBrowser();
+      }
+    }
+    updateMangaProgress("Packaging guided-panel EPUB…", 86);
+    const blob = await createMangaEpubBlob(epubPages, chapters, title, author, options.rtl);
+    const filename = safeMangaEpubFilename(title);
+    if (action === "download") {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      updateMangaProgress(`Built ${epubPages.length} guided EPUB pages · ${formatFileSize(blob.size)}`, 100);
+      showNotification(`${filename} is ready`, "success");
+    } else {
+      const file = new File([blob], filename, { type: "application/epub+zip" });
+      updateMangaProgress(`Uploading ${filename}…`, 88);
+      try {
+        await uploadFileWebSocket(file, (loaded, total) => updateMangaProgress(`Uploading ${filename}…`, 88 + loaded / total * 12));
+      } catch (websocketError) {
+        console.warn("Manga WebSocket upload failed, using HTTP:", websocketError);
+        await uploadFileHTTP(file, (loaded, total) => updateMangaProgress(`Uploading ${filename}…`, 88 + loaded / total * 12));
+      }
+      updateMangaProgress(`Uploaded ${epubPages.length} guided EPUB pages to ${currentPath}`, 100);
+      showNotification(`${filename} uploaded to your X4`, "success");
+      setTimeout(() => window.location.reload(), 900);
+    }
+  } catch (error) {
+    console.error("Frost Manga build failed:", error);
+    alert(`Frost Manga build failed: ${error.message}`);
+  } finally {
+    setMangaBusy(false);
+  }
 }
 hydrate();

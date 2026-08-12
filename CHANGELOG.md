@@ -1,7 +1,55 @@
+## [Unreleased]
+
+### Added
+
+- Frost Clean EPUB optimization now normalizes hostile publisher styling and tunes inline artwork for the X4's four-shade display before upload.
+- Frost Manga Lab converts comic EPUB, CBZ, ZIP, or image folders into rotatable guided-panel EPUBs with manga/comic reading order, spread splitting, border trimming, and screen-aware tone presets.
+- Frost Manga Lab can follow fixed-layout comic EPUB spine order and conservatively turn gutter-separated artwork into guided panel pages, with an optional full-page overview and automatic whole-page fallback.
+- Reader options now include Light, Normal, and Dark Ink Weight for anti-aliased EPUB and TXT text without changing pagination.
+- Home now has separate Books and Comics shelves backed by `/Books` and `/Comics` on the SD card.
+- Library shelves now open nested folders as series collections, such as `/Books/The Expanse Series/`.
+
+### Changed
+
+- Home now opens a cover-and-title Books shelf, while the full file browser lives under Settings > System.
+- Guided Manga output now uses tightly cropped EPUB panel images so the normal reader orientation and page controls remain available.
+- Guided Manga EPUBs now cache up to eight panel pages per section, avoiding an expensive EPUB section transition on every panel turn.
+
+### Fixed
+
+- Books now discovers supported files transferred to the SD card without requiring them to be opened in Browse Files first.
+- Books keeps files outside the new library roots available through an Unsorted compatibility collection.
+- Guided Panels now trims only consistent near-white borders, keeps extra context around detected panels, and packages each panel as a separate responsive EPUB page.
+- Image-only EPUB pages now centre their artwork vertically inside the active portrait or landscape reading area.
+
+## [FrostInk v1.0.3] - 2026-08-08
+
+### Changed
+
+- Frost now shows a branded, single-refresh transition stamp while opening Wi-Fi, OTA, and other reboot-backed tools.
+- Frost settings tabs now mark the active category with a rounded, segmented-control pill instead of bold text alone.
+- Frost navigation now uses soft-gray rounded selection, pill tabs, rounded key hints and dialogs, quieter headers, and a framed empty-library card for a minimal e-ink UI.
+
+## [FrostInk v1.0.2.1] - 2026-08-08
+
+### Fixed
+
+- OTA update checks now recognize firmware assets with ordinary three-part versions such as `firmware-x3-x4-v1.0.2.bin`.
+
+## [FrostInk v1.0.2] - 2026-08-08
+
+### Fixed
+
+- OTA update checks now allow up to 30 seconds for GitHub to respond and report connection timeouts separately from other update failures.
+
 ## [v1.5.0] - 2026-08-04
 
 ### Added
 
+- Frost UI theme with crisp monochrome navigation, high-contrast selections, and matching web portal styling.
+- FrostInk boot branding with a custom snow-crystal, fountain-nib, and open-book mark.
+- A FrostInk identity pack across the boot screen, device portal, favicon, user-facing errors, and project documentation.
+- A FrostInk OTA channel with mandatory release SHA-256 metadata, SD staging, full image validation, atomic boot-slot switching, and first-boot rollback confirmation.
 - EPUB tables now lay out a row at a time in both Incremental and Full Section indexing, keeping regular tables readable without whole-table buffering.
 - Touch support for Seeed Studio Sticky
 - Nearby File Transfer can send EPUB, TXT, XTC, XTCH, PNG, and BMP files directly between two CrossInk devices without a Wi-Fi network.
@@ -50,7 +98,7 @@
 ### Fixed
 
 - Manage Fonts now opens through a lightweight restart path, freeing reader memory before it loads the font catalog.
-- X4 network workflows now use a clean refresh when replacing whole screens, preventing prior content from remaining visible in File Transfer, Wi-Fi, Sync Progress, OPDS, updates, and nearby-transfer views.
+- X4 network workflows now use a clean single-pass refresh when replacing whole screens, preventing prior content from remaining visible without the multi-flash full waveform.
 - Home and Recent Books no longer repeatedly try to generate a cover thumbnail for EPUBs that do not include a cover.
 - Manage Fonts now reports an installed-font scan memory error instead of restarting when a fragmented X3/X4 heap cannot enumerate a font directory.
 - Saved Wi-Fi networks now remain available when managing them from the File Transfer web page after a restart.

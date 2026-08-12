@@ -29,7 +29,8 @@ enum class SmokeStep : uint8_t {
   Start,
   Home,
   FileBrowser,
-  RecentBooks,
+  Books,
+  Comics,
   Settings,
   ReaderOptions,
   ReaderMenu,
@@ -170,11 +171,16 @@ class SimulatorSmokeTest {
         break;
 
       case SmokeStep::FileBrowser:
-        activityManager.goToRecentBooks();
-        queueStep("Recent Books", SmokeStep::RecentBooks);
+        activityManager.goToBooks();
+        queueStep("Books", SmokeStep::Books);
         break;
 
-      case SmokeStep::RecentBooks:
+      case SmokeStep::Books:
+        activityManager.goToComics();
+        queueStep("Comics", SmokeStep::Comics);
+        break;
+
+      case SmokeStep::Comics:
         activityManager.goToSettings();
         queueStep("Settings", SmokeStep::Settings);
         break;

@@ -48,6 +48,9 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  // Reader-only optical weight for 2-bit glyph coverage: 0=light, 1=normal, 2=dark.
+  // It changes gray coverage only, so glyph metrics and page layout stay stable.
+  uint8_t textInkWeight = 1;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -193,6 +196,13 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
+  void setTextInkWeight(const uint8_t weight) { textInkWeight = weight <= 2 ? weight : 1; }
+  uint8_t getTextInkWeight() const { return textInkWeight; }
+  uint8_t adjustTextCoverage(uint8_t raw) const {
+    if (raw == 0 || raw == 3 || textInkWeight == 1) return raw;
+    if (textInkWeight == 0) return raw == 1 ? 0 : 1;
+    return raw == 1 ? 2 : 3;
+  }
 
   // Screen ops
   int getScreenWidth() const;

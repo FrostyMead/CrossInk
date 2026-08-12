@@ -107,6 +107,7 @@ void TxtReaderActivity::onEnter() {
 
   sdFontSystem.ensureLoaded(renderer);
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+  renderer.setTextInkWeight(SETTINGS.readerInkWeight);
 
   // Activate reader-specific front button mapping (if configured).
   mappedInput.setReaderMode(true);
@@ -128,6 +129,7 @@ void TxtReaderActivity::onEnter() {
 
 void TxtReaderActivity::onExit() {
   Activity::onExit();
+  renderer.setTextInkWeight(CrossPointSettings::READER_INK_NORMAL);
 
   // Deactivate reader-specific front button mapping.
   mappedInput.setReaderMode(false);
@@ -564,6 +566,7 @@ void TxtReaderActivity::render(RenderLock&&) {
 }
 
 void TxtReaderActivity::renderPage() {
+  renderer.setTextInkWeight(SETTINGS.readerInkWeight);
   const int lineHeight = getReaderLineHeight(renderer, cachedFontId);
   const int contentWidth = viewportWidth;
 

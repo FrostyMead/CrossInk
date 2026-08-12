@@ -8,11 +8,15 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Xtc.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
+#include <cstring>
+#include <string_view>
 
 #include "BookActions.h"
 #include "CrossPointSettings.h"
@@ -30,10 +34,11 @@
 #include "fontIds.h"
 
 namespace {
-constexpr int kCoverCornerRadius = 2;
+constexpr int kCoverCornerRadius = 10;
 constexpr int kGridColumns = 3;
 constexpr int kTitleStripHeight = 32;
 constexpr int kTitleGridGap = 8;
+constexpr int kCoverTitleGap = 5;
 constexpr int kSelectionPadding = 4;
 constexpr int kSelectionOutlineGap = 2;
 constexpr int kSelectionOuterInset = kSelectionPadding + kSelectionOutlineGap;
@@ -41,6 +46,42 @@ constexpr unsigned long kLongPressMs = 1000;
 constexpr unsigned long kActionFeedbackMs = 1000;
 constexpr float kCircleRadians = 6.2831853f;
 constexpr float kCircleRadiansPerPercent = kCircleRadians / 100.0f;
+
+bool isSystemLibraryEntry(const std::string_view name) {
+  if (name.empty() || name.front() == '.') return true;
+  return name == "System Volume Information" || name == "$RECYCLE.BIN" || name == "desktop.ini" ||
+         name == "Thumbs.db" || name == "IndexerVolumeGuid" || name == "WPSettings.dat" || name.rfind("._", 0) == 0;
+}
+
+bool isSupportedBookFile(const std::string_view name) {
+  return FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) || FsHelpers::hasTxtExtension(name) ||
+         FsHelpers::hasMarkdownExtension(name);
+}
+
+std::string buildLibraryPath(const std::string& directory, const char* name) {
+  std::string path;
+  path.reserve(directory.size() + std::strlen(name) + 1);
+  path = directory;
+  if (path.empty() || path.back() != '/') path += '/';
+  path += name;
+  return path;
+}
+
+std::string titleFromBookPath(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  const size_t nameStart = slash == std::string::npos ? 0 : slash + 1;
+  const size_t extension = path.find_last_of('.');
+  const size_t nameLength =
+      extension != std::string::npos && extension > nameStart ? extension - nameStart : std::string::npos;
+  return path.substr(nameStart, nameLength);
+}
+
+std::string nameFromPath(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  return path.substr(slash == std::string::npos ? 0 : slash + 1);
+}
+
+bool isLibraryRootPath(const std::string& path) { return path == "/Books" || path == "/Comics"; }
 
 void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const int y, const int size,
                               const float progressPercent) {
@@ -136,16 +177,17 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
   return std::max(previousPageStart, previousPageCandidate);
 }
 
-void updateRecentBookCover(const RecentBook& book) {
+void updateRecentBookCover(const RecentBook& book, const bool inRecentStore) {
+  if (!inRecentStore) return;
   if (!RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath, book.coverState)) {
     LOG_ERR("RBGA", "failed to update recent book metadata: %s", book.path.c_str());
   }
 }
 
-void markCoverMissing(RecentBook& book) {
+void markCoverMissing(RecentBook& book, const bool inRecentStore) {
   book.coverBmpPath.clear();
   book.coverState = RecentBook::CoverState::Missing;
-  updateRecentBookCover(book);
+  updateRecentBookCover(book, inRecentStore);
 }
 
 bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
@@ -199,7 +241,7 @@ std::string getReusableCoverPath(const RecentBook& book) {
   return book.coverBmpPath;
 }
 
-void ensureReusableCoverPath(RecentBook& book) {
+void ensureReusableCoverPath(RecentBook& book, const bool inRecentStore) {
   if (book.coverState == RecentBook::CoverState::Missing || hasThumbnailPlaceholder(book.coverBmpPath)) {
     return;
   }
@@ -210,24 +252,214 @@ void ensureReusableCoverPath(RecentBook& book) {
   }
 
   book.coverBmpPath = reusablePath;
-  updateRecentBookCover(book);
+  updateRecentBookCover(book, inRecentStore);
 }
 }  // namespace
 
-void RecentBooksGridActivity::loadRecentBooks() {
-  recentBooks.clear();
-  const auto& books = RECENT_BOOKS.getBooks();
-  recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
-
-  for (const auto& book : books) {
-    if (recentBooks.size() >= MAX_GRID_BOOKS) break;
-    if (!Storage.exists(book.path.c_str())) continue;
-    recentBooks.push_back(BookState{book});
+void RecentBooksGridActivity::clearScanDirectories() {
+  for (auto& directory : scanDirectories) {
+    std::string{}.swap(directory);
   }
+}
+
+void RecentBooksGridActivity::appendBookFile(const std::string& path) {
+  if (recentBooks.size() >= MAX_LIBRARY_BOOKS) return;
+
+  const auto& storedBooks = RECENT_BOOKS.getBooks();
+  const auto stored =
+      std::find_if(storedBooks.begin(), storedBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+  if (stored != storedBooks.end()) {
+    recentBooks.push_back(BookState{*stored, -1.0f, false, true, false, false});
+    return;
+  }
+
+  RecentBook book;
+  book.path = path;
+  book.title = titleFromBookPath(path);
+  if (FsHelpers::hasEpubExtension(path)) {
+    book.coverBmpPath = Epub(path, "/.crosspoint").getThumbBmpPath();
+  } else if (FsHelpers::hasXtcExtension(path)) {
+    book.coverBmpPath = Xtc(path, "/.crosspoint").getThumbBmpPath();
+  }
+  recentBooks.push_back(BookState{std::move(book), -1.0f, false, false, false, false});
+}
+
+void RecentBooksGridActivity::discoverBooks() {
+  if (!scanNameBuffer || recentBooks.size() >= MAX_LIBRARY_BOOKS) return;
+
+  clearScanDirectories();
+  scanDirectories[0] = "/";
+  size_t directoryCount = 1;
+  size_t directoryIndex = 0;
+  bool directoryLimitReached = false;
+
+  while (directoryIndex < directoryCount && recentBooks.size() < MAX_LIBRARY_BOOKS) {
+    const std::string directoryPath = scanDirectories[directoryIndex++];
+    auto directory = Storage.open(directoryPath.c_str());
+    if (!directory || !directory.isDirectory()) {
+      if (directory) directory.close();
+      LOG_ERR("RBGA", "failed to scan library directory: %s", directoryPath.c_str());
+      continue;
+    }
+    directory.rewindDirectory();
+
+    for (auto entry = directory.openNextFile(); entry && recentBooks.size() < MAX_LIBRARY_BOOKS;
+         entry = directory.openNextFile()) {
+      entry.getName(scanNameBuffer.get(), SCAN_NAME_BUFFER_SIZE);
+      const bool isDirectory = entry.isDirectory();
+      entry.close();
+
+      const std::string_view name(scanNameBuffer.get());
+      if (isSystemLibraryEntry(name)) continue;
+
+      const std::string fullPath = buildLibraryPath(directoryPath, scanNameBuffer.get());
+      if (isDirectory) {
+        // Books and Comics are browsed through their own shelves. The virtual
+        // Unsorted collection only preserves files that still live elsewhere.
+        if (isLibraryRootPath(fullPath)) continue;
+        if (directoryCount < MAX_SCAN_DIRECTORIES) {
+          scanDirectories[directoryCount++] = fullPath;
+        } else {
+          directoryLimitReached = true;
+        }
+        continue;
+      }
+      if (!isSupportedBookFile(name)) continue;
+      appendBookFile(fullPath);
+    }
+
+#ifndef SIMULATOR
+    if (directory.allocationFailed()) {
+      LOG_ERR("RBGA", "library scan stopped early after directory-entry allocation failed");
+      directory.close();
+      break;
+    }
+#endif
+    directory.close();
+  }
+
+  clearScanDirectories();
+  if (directoryLimitReached) {
+    LOG_ERR("RBGA", "library scan reached the %u-directory safety limit", static_cast<unsigned>(MAX_SCAN_DIRECTORIES));
+  }
+  if (recentBooks.size() >= MAX_LIBRARY_BOOKS) {
+    LOG_INF("RBGA", "library shelf limited to %u books", static_cast<unsigned>(MAX_LIBRARY_BOOKS));
+  }
+}
+
+bool RecentBooksGridActivity::hasUnsortedBooks() {
+  if (!scanNameBuffer) return false;
+
+  clearScanDirectories();
+  scanDirectories[0] = "/";
+  size_t directoryCount = 1;
+  size_t directoryIndex = 0;
+
+  while (directoryIndex < directoryCount) {
+    const std::string directoryPath = scanDirectories[directoryIndex++];
+    auto directory = Storage.open(directoryPath.c_str());
+    if (!directory || !directory.isDirectory()) {
+      if (directory) directory.close();
+      continue;
+    }
+    directory.rewindDirectory();
+
+    for (auto entry = directory.openNextFile(); entry; entry = directory.openNextFile()) {
+      entry.getName(scanNameBuffer.get(), SCAN_NAME_BUFFER_SIZE);
+      const bool isDirectory = entry.isDirectory();
+      entry.close();
+
+      const std::string_view name(scanNameBuffer.get());
+      if (isSystemLibraryEntry(name)) continue;
+
+      const std::string fullPath = buildLibraryPath(directoryPath, scanNameBuffer.get());
+      if (isDirectory) {
+        if (!isLibraryRootPath(fullPath) && directoryCount < MAX_SCAN_DIRECTORIES) {
+          scanDirectories[directoryCount++] = fullPath;
+        }
+      } else if (isSupportedBookFile(name)) {
+        directory.close();
+        clearScanDirectories();
+        return true;
+      }
+    }
+    directory.close();
+  }
+
+  clearScanDirectories();
+  return false;
+}
+
+void RecentBooksGridActivity::loadDirectory() {
+  auto directory = Storage.open(currentDirectory.c_str());
+  if (!directory || !directory.isDirectory()) {
+    if (directory) directory.close();
+    LOG_ERR("RBGA", "failed to open library directory: %s", currentDirectory.c_str());
+    return;
+  }
+  directory.rewindDirectory();
+
+  for (auto entry = directory.openNextFile(); entry && recentBooks.size() < MAX_LIBRARY_BOOKS;
+       entry = directory.openNextFile()) {
+    entry.getName(scanNameBuffer.get(), SCAN_NAME_BUFFER_SIZE);
+    const bool isDirectory = entry.isDirectory();
+    entry.close();
+
+    const std::string_view name(scanNameBuffer.get());
+    if (isSystemLibraryEntry(name)) continue;
+
+    const std::string fullPath = buildLibraryPath(currentDirectory, scanNameBuffer.get());
+    if (isDirectory) {
+      RecentBook folder;
+      folder.path = fullPath;
+      folder.title = nameFromPath(fullPath);
+      recentBooks.push_back(BookState{std::move(folder), -1.0f, false, false, true, false});
+    } else if (isSupportedBookFile(name)) {
+      appendBookFile(fullPath);
+    }
+  }
+
+#ifndef SIMULATOR
+  if (directory.allocationFailed()) {
+    LOG_ERR("RBGA", "library directory stopped early after directory-entry allocation failed");
+  }
+#endif
+  directory.close();
+}
+
+void RecentBooksGridActivity::loadBooks() {
+  recentBooks.clear();
+  recentBooks.reserve(MAX_LIBRARY_BOOKS);
+  if (!scanNameBuffer) return;
+
+  if (showingUnsorted) {
+    discoverBooks();
+  } else {
+    loadDirectory();
+  }
+
+  std::sort(recentBooks.begin(), recentBooks.end(), [](const BookState& a, const BookState& b) {
+    if (a.isDirectory != b.isDirectory) return a.isDirectory;
+    const std::string& aKey = a.book.title.empty() ? a.book.path : a.book.title;
+    const std::string& bKey = b.book.title.empty() ? b.book.path : b.book.title;
+    return FsHelpers::naturalLess(aKey, bKey);
+  });
+
+  if (isAtLibraryRoot() && section == LibrarySection::Books && recentBooks.size() < MAX_LIBRARY_BOOKS &&
+      hasUnsortedBooks()) {
+    RecentBook unsorted;
+    unsorted.path = "/";
+    unsorted.title = tr(STR_UNSORTED);
+    recentBooks.insert(recentBooks.begin(), BookState{std::move(unsorted), -1.0f, false, false, true, true});
+  }
+
+  LOG_INF("RBGA", "loaded %u %s entries from %s", static_cast<unsigned>(recentBooks.size()),
+          section == LibrarySection::Books ? "book" : "comic", showingUnsorted ? "Unsorted" : currentDirectory.c_str());
 }
 
 void RecentBooksGridActivity::ensureProgressLoaded(const int index) {
   if (index < 0 || index >= static_cast<int>(recentBooks.size())) return;
+  if (recentBooks[index].isDirectory) return;
   if (recentBooks[index].progressLoaded) {
     return;
   }
@@ -241,8 +473,10 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
 
   bool needsGeneration = false;
   for (int i = pageStart; i < pageEnd; ++i) {
-    RecentBook& book = recentBooks[i].book;
-    ensureReusableCoverPath(book);
+    BookState& state = recentBooks[i];
+    if (state.isDirectory) continue;
+    RecentBook& book = state.book;
+    ensureReusableCoverPath(book, state.inRecentStore);
     if (book.coverBmpPath.empty()) {
       continue;
     }
@@ -263,7 +497,12 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   int processedCount = 0;
 
   for (int i = pageStart; i < pageEnd; ++i) {
-    RecentBook& book = recentBooks[i].book;
+    BookState& state = recentBooks[i];
+    if (state.isDirectory) {
+      processedCount++;
+      continue;
+    }
+    RecentBook& book = state.book;
     if (book.coverBmpPath.empty()) {
       processedCount++;
       continue;
@@ -273,6 +512,8 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
         if (epub.load(true, true, Epub::XLocationLoadMode::Skip)) {
+          if (!epub.getTitle().empty()) book.title = epub.getTitle();
+          book.author = epub.getAuthor();
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -281,14 +522,16 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           if (epub.generateThumbBmp(COVER_WIDTH, COVER_HEIGHT, &renderer, SETTINGS.getReaderFontId())) {
             const std::string reusablePath = epub.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
-            updateRecentBookCover(book);
+            updateRecentBookCover(book, state.inRecentStore);
           } else if (!epub.hasCoverImage()) {
-            markCoverMissing(book);
+            markCoverMissing(book, state.inRecentStore);
           }
         }
       } else if (FsHelpers::hasXtcExtension(book.path)) {
         Xtc xtc(book.path, "/.crosspoint");
         if (xtc.load()) {
+          if (!xtc.getTitle().empty()) book.title = xtc.getTitle();
+          book.author = xtc.getAuthor();
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -297,7 +540,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           if (xtc.generateThumbBmp(COVER_WIDTH, COVER_HEIGHT)) {
             const std::string reusablePath = xtc.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
-            updateRecentBookCover(book);
+            updateRecentBookCover(book, state.inRecentStore);
           }
         }
       }
@@ -311,9 +554,74 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   }
 }
 
+bool RecentBooksGridActivity::isAtLibraryRoot() const { return !showingUnsorted && currentDirectory == libraryRoot; }
+
+const char* RecentBooksGridActivity::sectionTitle() const {
+  return section == LibrarySection::Books ? tr(STR_BOOKS) : tr(STR_COMICS);
+}
+
+std::string RecentBooksGridActivity::headerTitle() const {
+  if (showingUnsorted) return tr(STR_UNSORTED);
+  if (isAtLibraryRoot()) return sectionTitle();
+  return nameFromPath(currentDirectory);
+}
+
+void RecentBooksGridActivity::openEntry(const int index) {
+  if (index < 0 || index >= static_cast<int>(recentBooks.size())) return;
+  const BookState& state = recentBooks[index];
+  if (!state.isDirectory) {
+    onSelectBook(state.book.path);
+    return;
+  }
+
+  showingUnsorted = state.isUnsortedCollection;
+  currentDirectory = showingUnsorted ? "/" : state.book.path;
+  selectorIndex = 0;
+  loadedPageStart = NO_PAGE_LOADED;
+  loadBooks();
+  ensureProgressLoaded(selectorIndex);
+  requestUpdate(true);
+}
+
+void RecentBooksGridActivity::navigateBack() {
+  if (isAtLibraryRoot()) {
+    onGoHome();
+    return;
+  }
+
+  if (showingUnsorted) {
+    showingUnsorted = false;
+    currentDirectory = libraryRoot;
+  } else {
+    const size_t slash = currentDirectory.find_last_of('/');
+    currentDirectory = slash == std::string::npos || slash == 0 ? libraryRoot : currentDirectory.substr(0, slash);
+    if (currentDirectory.size() < libraryRoot.size() ||
+        currentDirectory.compare(0, libraryRoot.size(), libraryRoot) != 0) {
+      currentDirectory = libraryRoot;
+    }
+  }
+
+  selectorIndex = 0;
+  loadedPageStart = NO_PAGE_LOADED;
+  loadBooks();
+  ensureProgressLoaded(selectorIndex);
+  requestUpdate(true);
+}
+
 void RecentBooksGridActivity::onEnter() {
   Activity::onEnter();
-  loadRecentBooks();
+  // The reusable scan buffer is too large for the activity task's small stack.
+  scanNameBuffer = makeUniqueNoThrow<char[]>(SCAN_NAME_BUFFER_SIZE);
+  if (!scanNameBuffer) {
+    LOG_ERR("RBGA", "library scan name buffer allocation failed (%u bytes)",
+            static_cast<unsigned>(SCAN_NAME_BUFFER_SIZE));
+  }
+  for (const char* root : {"/Books", "/Comics"}) {
+    if (!Storage.exists(root) && !Storage.mkdir(root, true)) {
+      LOG_ERR("RBGA", "failed to create library root: %s", root);
+    }
+  }
+  loadBooks();
   selectorIndex = 0;
   loadedPageStart = NO_PAGE_LOADED;
   ensureProgressLoaded(selectorIndex);
@@ -323,6 +631,8 @@ void RecentBooksGridActivity::onEnter() {
 void RecentBooksGridActivity::onExit() {
   Activity::onExit();
   recentBooks.clear();
+  scanNameBuffer.reset();
+  clearScanDirectories();
 }
 
 int RecentBooksGridActivity::bookIndexFromPoint(const int x, const int y) {
@@ -333,6 +643,8 @@ int RecentBooksGridActivity::bookIndexFromPoint(const int x, const int y) {
   const int contentTop = CompactHeader::contentTop(metrics);
   const int gridSpacing = metrics.verticalSpacing;
   const int rowSpacing = gridSpacing + 4;
+  const int titleLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int tileHeight = COVER_HEIGHT + kCoverTitleGap + titleLineHeight;
   const int totalGridWidth = kGridColumns * COVER_WIDTH + (kGridColumns - 1) * gridSpacing;
   const int startXOffset = (pageWidth - totalGridWidth) / 2;
   const int totalBooks = static_cast<int>(recentBooks.size());
@@ -345,11 +657,11 @@ int RecentBooksGridActivity::bookIndexFromPoint(const int x, const int y) {
     const int col = i % kGridColumns;
     const int row = i / kGridColumns;
     const int coverX = startXOffset + col * (COVER_WIDTH + gridSpacing);
-    const int coverY = contentTop + kTitleStripHeight + kTitleGridGap + row * (COVER_HEIGHT + rowSpacing);
+    const int coverY = contentTop + kTitleStripHeight + kTitleGridGap + row * (tileHeight + rowSpacing);
     const int hitX = coverX - kSelectionOuterInset;
     const int hitY = coverY - kSelectionOuterInset;
     const int hitWidth = COVER_WIDTH + kSelectionOuterInset * 2;
-    const int hitHeight = COVER_HEIGHT + kSelectionOuterInset * 2;
+    const int hitHeight = tileHeight + kSelectionOuterInset * 2;
     if (x >= hitX && x < hitX + hitWidth && y >= hitY && y < hitY + hitHeight) {
       return pageStart + i;
     }
@@ -366,7 +678,7 @@ void RecentBooksGridActivity::loop() {
   }
 
   if (TouchHeaderBackButton::wasTapped(mappedInput, TouchHeaderBackButton::compactHeaderRect(renderer))) {
-    onGoHome();
+    navigateBack();
     return;
   }
   if (longPressFired) {
@@ -377,7 +689,8 @@ void RecentBooksGridActivity::loop() {
   }
 
   if (!recentBooks.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size()) &&
-      mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= kLongPressMs) {
+      !recentBooks[selectorIndex].isDirectory && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= kLongPressMs) {
     longPressFired = true;
     showBookActionMenu(selectorIndex, true);
     return;
@@ -390,6 +703,7 @@ void RecentBooksGridActivity::loop() {
     if (touchedIndex >= 0) {
       selectorIndex = touchedIndex;
       ensureProgressLoaded(selectorIndex);
+      if (recentBooks[selectorIndex].isDirectory) return;
       mappedInput.suppressNextTouchTap();
       longPressFired = true;
       showBookActionMenu(selectorIndex, true);
@@ -399,13 +713,13 @@ void RecentBooksGridActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!recentBooks.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
-      onSelectBook(recentBooks[selectorIndex].book.path);
+      openEntry(selectorIndex);
       return;
     }
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    onGoHome();
+    navigateBack();
     return;
   }
 
@@ -450,7 +764,7 @@ void RecentBooksGridActivity::loop() {
     if (touchedIndex >= 0) {
       selectorIndex = touchedIndex;
       ensureProgressLoaded(selectorIndex);
-      onSelectBook(recentBooks[selectorIndex].book.path);
+      openEntry(selectorIndex);
       return;
     }
   }
@@ -467,7 +781,7 @@ void RecentBooksGridActivity::loop() {
 }
 
 void RecentBooksGridActivity::reloadAfterBookAction() {
-  loadRecentBooks();
+  loadBooks();
   if (recentBooks.empty()) {
     selectorIndex = 0;
   } else if (selectorIndex >= static_cast<int>(recentBooks.size())) {
@@ -517,10 +831,12 @@ void RecentBooksGridActivity::promptRemoveBook(const std::string& path, const st
 
 void RecentBooksGridActivity::showBookActionMenu(const int bookIndex, const bool ignoreInitialConfirmRelease) {
   if (bookIndex < 0 || bookIndex >= static_cast<int>(recentBooks.size())) return;
+  if (recentBooks[bookIndex].isDirectory) return;
 
-  const RecentBook book = recentBooks[bookIndex].book;
+  const BookState& state = recentBooks[bookIndex];
+  const RecentBook book = state.book;
   std::vector<FileBrowserActionActivity::MenuItem> items =
-      BookActions::buildBookActionItems(book.path, /*includeRemoveFromRecents=*/true);
+      BookActions::buildBookActionItems(book.path, state.inRecentStore);
   if (BookActions::canSendNearby(book.path)) {
     items.push_back({FileBrowserAction::SendNearby, StrId::STR_SEND_NEARBY_BOOK});
   }
@@ -648,14 +964,17 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
+  const std::string title = headerTitle();
   if (mappedInput.hasTouchHardware()) {
-    TouchHeaderBackButton::drawCompact(renderer, tr(STR_MENU_RECENT_BOOKS));
+    TouchHeaderBackButton::drawCompact(renderer, title.c_str());
   } else {
-    CompactHeader::drawTitle(renderer, tr(STR_MENU_RECENT_BOOKS));
+    CompactHeader::drawTitle(renderer, title.c_str());
   }
   const int contentTop = CompactHeader::contentTop(metrics);
   const int gridSpacing = metrics.verticalSpacing;
   const int rowSpacing = gridSpacing + 4;
+  const int titleLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int tileHeight = COVER_HEIGHT + kCoverTitleGap + titleLineHeight;
   const int totalGridWidth = kGridColumns * COVER_WIDTH + (kGridColumns - 1) * gridSpacing;
   const int startXOffset = (pageWidth - totalGridWidth) / 2;
 
@@ -666,7 +985,10 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   const int pageCount = std::min(BOOKS_PER_PAGE, totalBooks - pageStart);
 
   if (recentBooks.empty()) {
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
+    const char* emptyLabel = showingUnsorted || !isAtLibraryRoot()
+                                 ? tr(STR_NO_FILES_FOUND)
+                                 : (section == LibrarySection::Books ? tr(STR_NO_BOOKS) : tr(STR_NO_COMICS));
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, emptyLabel);
   } else {
     if (selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
       const int titleLh = renderer.getLineHeight(UI_10_FONT_ID);
@@ -711,18 +1033,33 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       const int col = i % kGridColumns;
       const int row = i / kGridColumns;
       const int x = startXOffset + col * (COVER_WIDTH + gridSpacing);
-      const int y = contentTop + kTitleStripHeight + kTitleGridGap + row * (COVER_HEIGHT + rowSpacing);
+      const int y = contentTop + kTitleStripHeight + kTitleGridGap + row * (tileHeight + rowSpacing);
 
       const int bx = x;
       const int by = y;
       constexpr int bw = COVER_WIDTH;
       constexpr int bh = COVER_HEIGHT;
+      const bool selected = bookIdx == selectorIndex;
+      if (selected) {
+        renderer.fillRoundedRect(bx - kSelectionOuterInset, by - kSelectionOuterInset, bw + kSelectionOuterInset * 2,
+                                 tileHeight + kSelectionOuterInset * 2, kCoverCornerRadius + kSelectionOuterInset,
+                                 Color::LightGray);
+        renderer.drawRoundedRect(bx - kSelectionOuterInset, by - kSelectionOuterInset, bw + kSelectionOuterInset * 2,
+                                 tileHeight + kSelectionOuterInset * 2, 2, kCoverCornerRadius + kSelectionOuterInset,
+                                 true);
+      }
       bool drawn = false;
+      const BookState& state = recentBooks[bookIdx];
       const std::string thumbPath =
-          recentBooks[bookIdx].book.coverBmpPath.empty()
+          state.isDirectory || state.book.coverBmpPath.empty()
               ? ""
-              : UITheme::getCoverThumbPath(recentBooks[bookIdx].book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
-      if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
+              : UITheme::getCoverThumbPath(state.book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
+      if (state.isDirectory) {
+        renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+        renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
+        drawLucideIcon(renderer, icon_folder_32, bx + (bw - 32) / 2, by + (bh - 32) / 2);
+        drawn = true;
+      } else if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
         FsFile file;
         if (Storage.openFileForRead("RBGA", thumbPath, file)) {
           Bitmap bmp(file);
@@ -744,12 +1081,15 @@ void RecentBooksGridActivity::render(RenderLock&&) {
         renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
         drawLucideIcon(renderer, icon_book_marked_32, bx + (bw - 32) / 2, by + (bh - 32) / 2);
       }
-      if (bookIdx == static_cast<int>(selectorIndex)) {
-        renderer.drawRoundedRect(bx - kSelectionPadding, by - kSelectionPadding, bw + kSelectionPadding * 2,
-                                 bh + kSelectionPadding * 2, 3, kCoverCornerRadius + kSelectionPadding, true);
-        renderer.drawRoundedRect(bx - kSelectionOuterInset, by - kSelectionOuterInset, bw + kSelectionOuterInset * 2,
-                                 bh + kSelectionOuterInset * 2, 1, kCoverCornerRadius + kSelectionOuterInset, true);
-      }
+
+      const std::string& bookTitle = recentBooks[bookIdx].book.title;
+      const std::string visibleTitle = renderer.truncatedText(
+          UI_10_FONT_ID, bookTitle.empty() ? recentBooks[bookIdx].book.path.c_str() : bookTitle.c_str(),
+          bw + kSelectionPadding * 2, selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+      const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, visibleTitle.c_str(),
+                                                   selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, bx + (bw - titleWidth) / 2, by + bh + kCoverTitleGap, visibleTitle.c_str(), true,
+                        selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
     }
 
     if (totalPages > 1) {
@@ -771,7 +1111,8 @@ void RecentBooksGridActivity::render(RenderLock&&) {
 
   // The four physical hint slots are already occupied; Up/Down still navigate
   // the grid but are not rendered in this compact hint bar.
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+  const auto labels = mappedInput.mapLabels(isAtLibraryRoot() ? tr(STR_HOME) : tr(STR_BACK), tr(STR_OPEN),
+                                            tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   if (pendingCacheDeletedFeedback) {

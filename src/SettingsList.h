@@ -458,6 +458,9 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                             StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing, "textAntiAliasing",
                             StrId::STR_CAT_READER));
+    add(SettingInfo::Enum(StrId::STR_INK_WEIGHT, &CrossPointSettings::readerInkWeight,
+                          {StrId::STR_LIGHT, StrId::STR_NORMAL, StrId::STR_DARK}, "readerInkWeight",
+                          StrId::STR_CAT_READER));
     add(SettingInfo::Toggle(StrId::STR_READER_DARK_MODE, &CrossPointSettings::readerDarkMode, "readerDarkMode",
                             StrId::STR_CAT_READER));
     add(SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
@@ -1151,7 +1154,8 @@ inline std::vector<SettingInfo> buildDisplaySleepSettingsList(const std::vector<
 
 inline std::vector<SettingInfo> buildSystemSettingsParentList(const std::vector<SettingInfo>& allSettings) {
   std::vector<SettingInfo> systemSettings;
-  systemSettings.reserve(8);
+  systemSettings.reserve(9);
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::FileBrowser));
   systemSettings.push_back(SettingInfo::Submenu(StrId::STR_SYSTEM_DEVICE, SettingAction::SystemDevice));
   systemSettings.push_back(SettingInfo::Submenu(StrId::STR_SYSTEM_FILES_CACHE, SettingAction::SystemFilesCache));
   systemSettings.push_back(SettingInfo::Submenu(StrId::STR_READING_STATS, SettingAction::SystemReadingStats));

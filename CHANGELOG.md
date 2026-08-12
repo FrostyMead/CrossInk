@@ -1,3 +1,27 @@
+## [Unreleased]
+
+### Added
+
+- Frost Clean EPUB optimization now normalizes hostile publisher styling and tunes inline artwork for the X4's four-shade display before upload.
+- Frost Manga Lab converts comic EPUB, CBZ, ZIP, or image folders into rotatable guided-panel EPUBs with manga/comic reading order, spread splitting, border trimming, and screen-aware tone presets.
+- Frost Manga Lab can follow fixed-layout comic EPUB spine order and conservatively turn gutter-separated artwork into guided panel pages, with an optional full-page overview and automatic whole-page fallback.
+- Reader options now include Light, Normal, and Dark Ink Weight for anti-aliased EPUB and TXT text without changing pagination.
+- Home now has separate Books and Comics shelves backed by `/Books` and `/Comics` on the SD card.
+- Library shelves now open nested folders as series collections, such as `/Books/The Expanse Series/`.
+
+### Changed
+
+- Home now opens a cover-and-title Books shelf, while the full file browser lives under Settings > System.
+- Guided Manga output now uses tightly cropped EPUB panel images so the normal reader orientation and page controls remain available.
+- Guided Manga EPUBs now cache up to eight panel pages per section, avoiding an expensive EPUB section transition on every panel turn.
+
+### Fixed
+
+- Books now discovers supported files transferred to the SD card without requiring them to be opened in Browse Files first.
+- Books keeps files outside the new library roots available through an Unsorted compatibility collection.
+- Guided Panels now trims only consistent near-white borders, keeps extra context around detected panels, and packages each panel as a separate responsive EPUB page.
+- Image-only EPUB pages now centre their artwork vertically inside the active portrait or landscape reading area.
+
 ## [FrostInk v1.0.3] - 2026-08-08
 
 ### Changed

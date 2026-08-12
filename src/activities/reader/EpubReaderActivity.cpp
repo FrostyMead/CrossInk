@@ -77,7 +77,8 @@ constexpr uint8_t PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION = 3;
 constexpr uint8_t PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION = 4;
 constexpr uint8_t PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION = 5;
 constexpr uint8_t PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION = 6;
-constexpr uint8_t READER_SETTINGS_FILE_VERSION = 7;
+constexpr uint8_t PRE_INK_WEIGHT_READER_SETTINGS_FILE_VERSION = 7;
+constexpr uint8_t READER_SETTINGS_FILE_VERSION = 8;
 constexpr uint8_t READER_SETTINGS_FLAG_CUSTOM = 1 << 0;
 constexpr uint8_t READER_SETTINGS_FLAG_AUTO_PAGE_TURN = 1 << 1;
 constexpr uint8_t READER_SETTINGS_FLAG_RENDER_MODE = 1 << 2;
@@ -1066,6 +1067,7 @@ void captureReaderSettings(EpubReaderActivity::ReaderSettingsSnapshot& out) {
   out.embeddedStyle = SETTINGS.embeddedStyle;
   out.hyphenationEnabled = SETTINGS.hyphenationEnabled;
   out.textAntiAliasing = SETTINGS.textAntiAliasing;
+  out.readerInkWeight = SETTINGS.readerInkWeight;
   out.readerDarkMode = SETTINGS.readerDarkMode;
   out.imageRendering = SETTINGS.imageRendering;
   out.extraParagraphSpacing = SETTINGS.extraParagraphSpacing;
@@ -1103,6 +1105,9 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
   SETTINGS.embeddedStyle = in.embeddedStyle ? 1 : 0;
   SETTINGS.hyphenationEnabled = in.hyphenationEnabled ? 1 : 0;
   SETTINGS.textAntiAliasing = in.textAntiAliasing ? 1 : 0;
+  SETTINGS.readerInkWeight = in.readerInkWeight < CrossPointSettings::READER_INK_WEIGHT_COUNT
+                                 ? in.readerInkWeight
+                                 : CrossPointSettings::READER_INK_NORMAL;
   SETTINGS.readerDarkMode = in.readerDarkMode ? 1 : 0;
   SETTINGS.imageRendering =
       in.imageRendering < CrossPointSettings::IMAGE_RENDERING_COUNT ? in.imageRendering : SETTINGS.imageRendering;
@@ -1119,7 +1124,8 @@ void applyReaderSettings(const EpubReaderActivity::ReaderSettingsSnapshot& in) {
 using BookReaderSettingsData = EpubReaderActivity::BookReaderSettingsData;
 
 bool readReaderSettingsSnapshot(FsFile& file, EpubReaderActivity::ReaderSettingsSnapshot& out,
-                                const bool includesWordSpacing, const bool includesIndexingMethod) {
+                                const bool includesWordSpacing, const bool includesIndexingMethod,
+                                const bool includesInkWeight) {
   if (!(readU8(file, out.fontFamily) && readU8(file, out.readerFontPointSize) && readU8(file, out.lineHeightPercent) &&
         (!includesWordSpacing || readU8(file, out.wordSpacing)) && readU8(file, out.orientation) &&
         readU8(file, out.screenMargin) && readU8(file, out.publisherPageNumbers) &&
@@ -1135,6 +1141,9 @@ bool readReaderSettingsSnapshot(FsFile& file, EpubReaderActivity::ReaderSettings
   }
   out.epubRenderMode = normalizeRenderModeRaw(out.epubRenderMode);
   if (includesIndexingMethod && !readU8(file, out.indexingMethod)) {
+    return false;
+  }
+  if (includesInkWeight && !readU8(file, out.readerInkWeight)) {
     return false;
   }
   return readExact(file, out.sdFontFamilyName, sizeof(out.sdFontFamilyName));
@@ -1153,6 +1162,9 @@ bool writeReaderSettingsSnapshot(FsFile& file, const EpubReaderActivity::ReaderS
          writeU8(file, in.indexingMethod < CrossPointSettings::INDEXING_METHOD_COUNT
                            ? in.indexingMethod
                            : CrossPointSettings::INDEXING_FULL_SECTION) &&
+         writeU8(file, in.readerInkWeight < CrossPointSettings::READER_INK_WEIGHT_COUNT
+                           ? in.readerInkWeight
+                           : CrossPointSettings::READER_INK_NORMAL) &&
          writeExact(file, in.sdFontFamilyName, sizeof(in.sdFontFamilyName));
 }
 
@@ -1190,7 +1202,8 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
       version != PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION &&
       version != PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION &&
       version != PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION &&
-      version != PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
+      version != PRE_DICTIONARY_FONT_SIZE_READER_SETTINGS_FILE_VERSION &&
+      version != PRE_INK_WEIGHT_READER_SETTINGS_FILE_VERSION && version != READER_SETTINGS_FILE_VERSION) {
     file.close();
     LOG_DBG("ERS", "Reader settings version mismatch, using defaults");
     return data;
@@ -1209,12 +1222,13 @@ BookReaderSettingsData loadBookReaderSettingsFile(const std::string& cachePath) 
   }
   if (ok) {
     ok = readReaderSettingsSnapshot(file, snapshot, version >= PRE_INDEXING_METHOD_READER_SETTINGS_FILE_VERSION,
-                                    version >= PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION);
+                                    version >= PRE_DICTIONARY_FONT_READER_SETTINGS_FILE_VERSION,
+                                    version >= READER_SETTINGS_FILE_VERSION);
   }
   if (ok && version >= PRE_POINT_SIZE_READER_SETTINGS_FILE_VERSION) {
     ok = readExact(file, data.dictionarySdFontFamilyName, sizeof(data.dictionarySdFontFamilyName));
   }
-  if (ok && version >= READER_SETTINGS_FILE_VERSION) {
+  if (ok && version >= PRE_INK_WEIGHT_READER_SETTINGS_FILE_VERSION) {
     ok = readU8(file, data.dictionaryFontPointSize);
   }
   file.close();
@@ -1989,6 +2003,7 @@ void EpubReaderActivity::onEnter() {
   captureGlobalReaderSettings();
   epub->setupCacheDir();
   loadBookReaderSettings();
+  renderer.setTextInkWeight(SETTINGS.readerInkWeight);
   ensureReaderSdFontLoaded(renderer);
   ImageBlock::clearSessionRenderFailures();
   ImageBlock::setExtractor(epub.get(), [](void* context, const char* source, const char* destination) {
@@ -2114,6 +2129,7 @@ void EpubReaderActivity::onExit() {
   // The extraction callback holds the Epub as a raw context pointer.
   ImageBlock::setExtractor(nullptr, nullptr);
   releaseGrayscaleStripScratch();
+  renderer.setTextInkWeight(CrossPointSettings::READER_INK_NORMAL);
 
   // SD-font caches live in the renderer singleton, so leaving them resident after
   // the reader exits can fragment the contiguous heap needed for Home cover images.
@@ -5728,14 +5744,28 @@ void EpubReaderActivity::prepareCurrentSectionForRelayout() {
 void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fontId, const int orientedMarginTop,
                                         const int orientedMarginRight, const int orientedMarginBottom,
                                         const int orientedMarginLeft, const bool updatePanel) {
+  int pageRenderTop = orientedMarginTop;
+  int16_t singleImageX = 0;
+  int16_t singleImageY = 0;
+  int16_t singleImageWidth = 0;
+  int16_t singleImageHeight = 0;
+  if (page->hasSingleImageOnly() &&
+      page->getImageBoundingBox(singleImageX, singleImageY, singleImageWidth, singleImageHeight)) {
+    const int contentHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
+    if (singleImageHeight > 0 && singleImageHeight < contentHeight) {
+      pageRenderTop += (contentHeight - singleImageHeight) / 2 - singleImageY;
+    }
+  }
+  // Optical ink weight only remaps 2-bit glyph coverage; it does not alter metrics.
+  renderer.setTextInkWeight(SETTINGS.readerInkWeight);
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
-  page->renderText(renderer, fontId, orientedMarginLeft, orientedMarginTop);  // scan pass
+  page->renderText(renderer, fontId, orientedMarginLeft, pageRenderTop);  // scan pass
   scope.endScanAndPrewarm();
 
 #if CROSSINK_APP_CAP_TOUCH
-  buildFootnoteTouchTargets(*page, fontId, orientedMarginTop, orientedMarginLeft);
+  buildFootnoteTouchTargets(*page, fontId, pageRenderTop, orientedMarginLeft);
 #endif
 
   const bool pageHasImages = page->hasImages();
@@ -5750,8 +5780,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   const int contentBottom = renderer.getScreenHeight() - orientedMarginBottom;
 
   const auto finalizeBufferComposition = [&]() {
-    drawClippingHighlights(*page, fontId, orientedMarginTop, orientedMarginLeft);
-    drawPublisherPageMarkers(renderer, *page, orientedMarginTop, contentBottom, foregroundBlack);
+    drawClippingHighlights(*page, fontId, pageRenderTop, orientedMarginLeft);
+    drawPublisherPageMarkers(renderer, *page, pageRenderTop, contentBottom, foregroundBlack);
 #if CROSSINK_APP_CAP_TOUCH
     if (activeFootnotePreview) {
       TouchHeaderBackButton::draw(renderer, TouchHeaderBackButton::headerRect(renderer, mappedInput), tr(STR_FOOTNOTES),
@@ -5761,20 +5791,20 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   };
 
   const auto composePageBuffer = [&]() {
-    page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+    page->render(renderer, fontId, orientedMarginLeft, pageRenderTop, foregroundBlack);
     finalizeBufferComposition();
   };
 
   const auto composeGrayscaleBuffer = [&]() {
     if (needsTextGrayscale) {
-      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+      page->render(renderer, fontId, orientedMarginLeft, pageRenderTop, foregroundBlack);
     } else {
-      page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+      page->renderImages(renderer, fontId, orientedMarginLeft, pageRenderTop);
     }
     finalizeBufferComposition();
   };
   if (updatePanel && pageHasImagesNeedingDecode) {
-    page->renderWithImagePlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack);
+    page->renderWithImagePlaceholders(renderer, fontId, orientedMarginLeft, pageRenderTop, foregroundBlack);
     finalizeBufferComposition();
     renderStatusBar();
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -5823,7 +5853,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
     if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
       // Blank the image before any panel update so a pending clean pass does
       // not briefly show the decoded image before the final grayscale pass.
-      renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);
+      renderer.fillRect(imgX + orientedMarginLeft, imgY + pageRenderTop, imgW, imgH, false);
       // Image pages intentionally bypass the regular refresh cadence. Preserve
       // a pending clean base before their double-FAST grayscale pipeline.
       if (cleanImageBasePending) {
@@ -5872,7 +5902,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   if (needsAnyGrayscale) {
     ensureGrayscaleStripScratch();
   }
-  if (runTiledGrayscalePass(renderer, *page, fontId, orientedMarginLeft, orientedMarginTop, foregroundBlack,
+  if (runTiledGrayscalePass(renderer, *page, fontId, orientedMarginLeft, pageRenderTop, foregroundBlack,
                             needsTextGrayscale, needsImageGrayscale, grayscaleStripScratch.get(),
                             grayscaleStripScratchSize, overlapRefresh)) {
     return;

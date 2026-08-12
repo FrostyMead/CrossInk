@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cctype>
@@ -27,6 +28,7 @@
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
+#include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -911,6 +913,16 @@ void SettingsActivity::toggleCurrentSetting() {
     auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
 
     switch (setting.action) {
+      case SettingAction::FileBrowser:
+        // One browser activity allocation is retained until Back returns here;
+        // its file buffers are separately fallible in FileBrowserActivity::onEnter().
+        if (auto browser = makeUniqueNoThrow<FileBrowserActivity>(renderer, mappedInput, "/",
+                                                                  FileBrowserActivity::Mode::Books, true)) {
+          startActivityForResult(std::move(browser), resultHandler);
+        } else {
+          LOG_ERR("SET", "OOM: File Browser activity (%u bytes)", static_cast<unsigned>(sizeof(FileBrowserActivity)));
+        }
+        break;
       case SettingAction::RemapFrontButtons:
         startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput, false), resultHandler);
         break;

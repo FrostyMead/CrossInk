@@ -342,6 +342,26 @@ void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
 }
 
+void ActivityManager::goToBooks() {
+  // One activity-sized allocation is retained until the shelf closes; keeping
+  // it off the task stack also bounds the failure path on the C3.
+  auto books = makeUniqueNoThrow<RecentBooksGridActivity>(renderer, mappedInput);
+  if (!books) {
+    LOG_ERR("ACT", "OOM: Books activity (%u bytes)", static_cast<unsigned>(sizeof(RecentBooksGridActivity)));
+    return;
+  }
+  replaceActivity(std::move(books));
+}
+
+void ActivityManager::goToComics() {
+  auto comics = makeUniqueNoThrow<RecentBooksGridActivity>(renderer, mappedInput, LibrarySection::Comics);
+  if (!comics) {
+    LOG_ERR("ACT", "OOM: Comics activity (%u bytes)", static_cast<unsigned>(sizeof(RecentBooksGridActivity)));
+    return;
+  }
+  replaceActivity(std::move(comics));
+}
+
 void ActivityManager::goToRecentBooks() {
   if (SETTINGS.recentBooksView == CrossPointSettings::RECENT_BOOKS_GRID) {
     replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput));
@@ -418,8 +438,10 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFul
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {
       initialMenuItem = HomeMenuItem::FILE_BROWSER;
-    } else if (activityName == "RecentBooks") {
+    } else if (activityName == "RecentBooks" || activityName == "Books") {
       initialMenuItem = HomeMenuItem::RECENTS;
+    } else if (activityName == "Comics") {
+      initialMenuItem = HomeMenuItem::COMICS;
     } else if (activityName == "OpdsBookBrowser") {
       initialMenuItem = HomeMenuItem::OPDS_BROWSER;
     } else if (activityName == "CrossPointWebServer") {

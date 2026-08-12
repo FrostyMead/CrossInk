@@ -54,7 +54,7 @@ int scaled75SourceEnd(const int dst, const int srcLimit) {
 
 void draw2BitFontPixel(const GfxRenderer& renderer, const GfxRenderer::RenderMode renderMode, const int x, const int y,
                        const uint8_t raw, const bool pixelState) {
-  const uint8_t bmpVal = 3 - raw;
+  const uint8_t bmpVal = 3 - renderer.adjustTextCoverage(raw);
   if (renderMode == GfxRenderer::BW && bmpVal < 3) {
     renderer.drawPixel(x, y, pixelState);
   } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
@@ -867,7 +867,7 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
           // the direct bit from the font is 0 -> white, 1 -> light gray, 2 -> dark gray, 3 -> black
           // we swap this to better match the way images and screen think about colors:
           // 0 -> black, 1 -> dark grey, 2 -> light grey, 3 -> white
-          const uint8_t bmpVal = 3 - ((byte >> bit_index) & 0x3);
+          const uint8_t bmpVal = 3 - renderer.adjustTextCoverage((byte >> bit_index) & 0x3);
 
           if (renderMode == GfxRenderer::BW && bmpVal < 3) {
             // Black (also paints over the grays in BW mode)

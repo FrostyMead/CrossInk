@@ -190,6 +190,18 @@ class Page {
     });
   }
 
+  // Standalone comic panels and full-page artwork should use the available
+  // reader viewport rather than inheriting top-of-page text flow alignment.
+  // Pages containing captions, rules, or any other content remain untouched.
+  bool hasSingleImageOnly() const {
+    bool foundImage = false;
+    for (const auto& element : elements) {
+      if (!element || element->getTag() != TAG_PageImage || foundImage) return false;
+      foundImage = true;
+    }
+    return foundImage;
+  }
+
   // Get bounding box of all images on the page (union of image rects)
   // Returns false if no images. Coordinates are relative to page origin.
   bool getImageBoundingBox(int16_t& outX, int16_t& outY, int16_t& outW, int16_t& outH) const {

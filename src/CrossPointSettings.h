@@ -79,6 +79,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     XTC_STATUS_BAR_TOP = 2,
     XTC_STATUS_BAR_MODE_COUNT
   };
+  enum READER_INK_WEIGHT { READER_INK_LIGHT = 0, READER_INK_NORMAL = 1, READER_INK_DARK = 2, READER_INK_WEIGHT_COUNT };
   enum HIDE_CLOCK_MODE { HIDE_CLOCK_NEVER = 0, HIDE_CLOCK_IN_READER = 1, HIDE_CLOCK_ALWAYS = 2, HIDE_CLOCK_MODE_COUNT };
   // Persisted date-format values mirror HalClock::DateFormat.
   enum DATE_FORMAT {
@@ -357,6 +358,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t extraParagraphSpacing = 1;
   uint8_t forceParagraphIndents = 0;
   uint8_t textAntiAliasing = 1;
+  uint8_t readerInkWeight = READER_INK_NORMAL;
   uint8_t readerDarkMode = 0;
   // Touch screen reader zones/gestures on boards with a touch controller.
   uint8_t touchReaderControls = TOUCH_READER_ON;

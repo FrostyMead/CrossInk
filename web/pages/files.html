@@ -6,6 +6,7 @@
 
   <div class="action-buttons">
     <button class="action-btn upload-action-btn" onclick="openUploadModal()">📤 Upload</button>
+    <button class="action-btn frost-optimize-action-btn" onclick="openMangaOptimizer()">❄️ Frost Manga Lab</button>
     <button class="action-btn folder-action-btn" onclick="openFolderModal()">📁 New Folder</button>
     <button class="action-btn delete-action-btn" onclick="openDeleteSelectedModal()">🗑️ Delete Selected</button>
   </div>
@@ -93,6 +94,54 @@
               <div class="setting-controls">
                 <label class="toggle-switch">
                   <input type="checkbox" id="splitLongSectionsToggle" onchange="updateUploadSettingsPersistence()" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="advanced-setting-row">
+              <div class="setting-label">
+                <div class="setting-title">❄️ Frost Clean Typography</div>
+                <div class="setting-desc">Remove device-hostile styling while preserving headings, emphasis and reflow</div>
+              </div>
+              <div class="setting-controls">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="frostCleanToggle" onchange="updateUploadSettingsPersistence()" checked />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="advanced-setting-row optimizer-profile-row">
+              <div class="setting-label">
+                <div class="setting-title">🖼️ Inline Image Profile</div>
+                <div class="setting-desc">Tune illustrations for the X4 panel before they enter the EPUB</div>
+              </div>
+              <div class="setting-controls">
+                <select id="epubImageProfile" class="frost-select" onchange="setEpubImageProfile(this.value)">
+                  <option value="natural">Natural</option>
+                  <option value="lineart">Line Art</option>
+                  <option value="photo">Photo</option>
+                </select>
+              </div>
+            </div>
+            <div class="advanced-setting-row optimizer-slider-row">
+              <div class="setting-label">
+                <div class="setting-title">Tone</div>
+                <div class="setting-desc">Gamma, contrast and post-resize sharpening</div>
+              </div>
+              <div class="frost-tone-controls">
+                <label>Gamma <output id="epubGammaValue">1.00</output><input id="epubGamma" type="range" min="70" max="135" value="100" oninput="updateEpubToneControls()" /></label>
+                <label>Contrast <output id="epubContrastValue">12%</output><input id="epubContrast" type="range" min="0" max="40" value="12" oninput="updateEpubToneControls()" /></label>
+                <label>Sharpness <output id="epubSharpnessValue">30%</output><input id="epubSharpness" type="range" min="0" max="100" value="30" oninput="updateEpubToneControls()" /></label>
+              </div>
+            </div>
+            <div class="advanced-setting-row">
+              <div class="setting-label">
+                <div class="setting-title">Auto Black &amp; White Points</div>
+                <div class="setting-desc">Use the image histogram to recover clean paper and stronger blacks</div>
+              </div>
+              <div class="setting-controls">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="epubAutoLevelsToggle" onchange="updateUploadSettingsPersistence()" checked />
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -281,6 +330,116 @@
           <div class="log-title">📋 Conversion Log</div>
         </div>
         <div class="log-container" id="log-container"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Frost Manga / Comic Optimizer -->
+<div class="modal-overlay" id="mangaOptimizerModal">
+  <div class="modal manga-optimizer-mode">
+    <button class="modal-close" id="mangaOptimizerClose" onclick="closeMangaOptimizer()">&times;</button>
+    <div class="manga-lab-header">
+      <div>
+        <span class="test-pill">TEST</span>
+        <h3>❄️ Frost Manga Lab</h3>
+        <p>Convert comic EPUB, CBZ, ZIP or an image folder into a rotatable guided-panel EPUB for the X4.</p>
+      </div>
+      <div class="x4-resolution-badge">EPUB<br /><small>portrait + landscape</small></div>
+    </div>
+
+    <div class="manga-source-grid">
+      <label class="manga-drop-card">
+        <span class="manga-drop-icon">📚</span>
+        <strong>Choose Comic EPUB / CBZ / ZIP</strong>
+        <small>EPUB pages follow the book's spine order</small>
+        <input type="file" id="mangaArchiveInput" accept=".epub,.cbz,.zip,application/epub+zip,application/zip" onchange="loadMangaArchive(this.files[0])" />
+      </label>
+      <label class="manga-drop-card">
+        <span class="manga-drop-icon">🗂️</span>
+        <strong>Choose Image Folder</strong>
+        <small>Nothing leaves your browser until you upload</small>
+        <input type="file" id="mangaFolderInput" accept="image/*" multiple webkitdirectory onchange="loadMangaImageFiles(this.files)" />
+      </label>
+    </div>
+
+    <div id="mangaWorkspace" class="manga-workspace" hidden>
+      <div class="manga-settings-panel">
+        <div class="manga-field-row">
+          <label>Title<input id="mangaTitle" type="text" maxlength="120" /></label>
+          <label>Author<input id="mangaAuthor" type="text" maxlength="60" placeholder="Optional" /></label>
+        </div>
+        <div class="manga-field-row compact">
+          <label>Reading order
+            <select id="mangaDirection" class="frost-select" onchange="resetMangaPanelPreview()">
+              <option value="rtl">Manga — right to left</option>
+              <option value="ltr">Comic — left to right</option>
+            </select>
+          </label>
+          <label>Artwork preset
+            <select id="mangaPreset" class="frost-select" onchange="applyMangaPreset(this.value)">
+              <option value="manga">Clean Manga</option>
+              <option value="screentone">Screentone</option>
+              <option value="graphic">Graphic Novel</option>
+              <option value="colour">Colour Comic</option>
+            </select>
+          </label>
+          <label>Dithering
+            <select id="mangaDither" class="frost-select" onchange="refreshMangaPreview()">
+              <option value="threshold">Crisp 4-shade</option>
+              <option value="ordered">Ordered — screentones</option>
+              <option value="diffusion">Diffusion — gradients</option>
+            </select>
+          </label>
+        </div>
+        <div class="manga-toggle-row">
+          <label><input id="mangaGuidedPanels" type="checkbox" checked onchange="resetMangaPanelPreview()" /> Guided panel view</label>
+          <label><input id="mangaKeepOverview" type="checkbox" onchange="resetMangaPanelPreview()" /> Keep full-page overview</label>
+          <label><input id="mangaAutoSpread" type="checkbox" checked onchange="resetMangaPanelPreview()" /> Detect &amp; split spreads</label>
+          <label><input id="mangaAutoCrop" type="checkbox" checked onchange="resetMangaPanelPreview()" /> Trim empty borders</label>
+          <label><input id="mangaUpscale" type="checkbox" checked onchange="refreshMangaPreview()" /> Optimize panel resolution</label>
+        </div>
+        <div class="manga-tone-grid">
+          <label>Gamma <output id="mangaGammaValue">0.92</output><input id="mangaGamma" type="range" min="65" max="140" value="92" oninput="updateMangaToneControls()" /></label>
+          <label>Contrast <output id="mangaContrastValue">24%</output><input id="mangaContrast" type="range" min="0" max="50" value="24" oninput="updateMangaToneControls()" /></label>
+          <label>Sharpness <output id="mangaSharpnessValue">55%</output><input id="mangaSharpness" type="range" min="0" max="100" value="55" oninput="updateMangaToneControls()" /></label>
+          <label>Spread overlap <output id="mangaOverlapValue">2%</output><input id="mangaOverlap" type="range" min="0" max="8" value="2" oninput="updateMangaToneControls()" /></label>
+        </div>
+      </div>
+
+      <div class="manga-preview-panel">
+        <div class="manga-preview-copy">
+          <strong id="mangaSourceSummary">0 pages</strong>
+          <label class="manga-preview-orientation">Preview
+            <select id="mangaPreviewOrientation" class="frost-select" onchange="refreshMangaPreview()">
+              <option value="portrait">Portrait</option>
+              <option value="landscape">Landscape</option>
+            </select>
+          </label>
+          <span id="mangaPreviewNote">Select a page to preview the four-shade EPUB output.</span>
+        </div>
+        <div class="manga-preview-layout">
+          <div class="manga-page-strip" id="mangaPageStrip"></div>
+          <div class="x4-preview-shell">
+            <div class="x4-preview-screen"><canvas id="mangaPreviewCanvas" width="480" height="800"></canvas></div>
+            <div class="x4-preview-caption" id="mangaPreviewCaption">X4 output preview</div>
+            <div class="manga-panel-stepper" id="mangaPanelStepper" hidden>
+              <button type="button" aria-label="Previous detected panel" onclick="stepMangaPreviewPanel(-1)">&lsaquo;</button>
+              <span id="mangaPanelCounter">Panel 1 of 1</span>
+              <button type="button" aria-label="Next detected panel" onclick="stepMangaPreviewPanel(1)">&rsaquo;</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="manga-progress" id="mangaProgress" hidden>
+        <div class="manga-progress-copy"><span id="mangaProgressText">Preparing…</span><span id="mangaProgressPercent">0%</span></div>
+        <div class="manga-progress-track"><div id="mangaProgressFill"></div></div>
+      </div>
+      <div class="manga-actions">
+        <button class="delete-btn-cancel" onclick="closeMangaOptimizer()">Cancel</button>
+        <button class="action-btn" id="mangaDownloadBtn" onclick="buildMangaBook('download')">Build &amp; Download EPUB</button>
+        <button class="upload-btn optimize" id="mangaUploadBtn" onclick="buildMangaBook('upload')">Build &amp; Upload to X4</button>
       </div>
     </div>
   </div>
